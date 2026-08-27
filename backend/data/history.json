@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "profile": {
+    "name": "",
+    "job": "",
+    "systemPrompt": "",
+    "responseStyle": ""
+  },
+  "theme": "dark",
+  "activeConversationId": "1787681849_a544c661",
+  "conversations": [
+    {
+      "id": "1787681849_a544c661",
+      "title": "گفت‌وگوی جدید",
+      "messages": [],
+      "createdAt": 1787681849,
+      "updatedAt": 1787681849
+    }
+  ],
+  "savedImages": []
+}
