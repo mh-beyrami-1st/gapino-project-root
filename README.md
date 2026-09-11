@@ -2,11 +2,13 @@ gapino-project-root/
 ├── .example.env
 ├── .env
 ├── .gitignore
+├── pyproject.toml
 ├── requirements.txt
 ├── backend/
 │   ├── data/
 │   │   └── database.db
-│   └── server.py
+│   ├── server.py
+│   └── __init__.py
 └── frontend/
     ├── fonts/
     │   ├── Estedad-Bold.woff2
