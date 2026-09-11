@@ -1,16 +1,27 @@
 const DEFAULT_PROFILE = { name: "", job: "", systemPrompt: "", responseStyle: "" };
-const DEFAULT_MODEL_ID = "gemini-3.1-flash-lite";
+const DEFAULT_MODEL_ID = "gpt-5.4-nano";
 const MODEL_STORAGE_KEY = "gapino.selectedModel";
-const MODEL_OPTIONS = [
-  { id: "glm-4-flash", label: "GLM 4 Flash", strength: "ضعیف", tone: "weak" },
-  { id: "gemma-3-27b-it", label: "Gemma 3 27B IT", strength: "متوسط", tone: "medium" },
-  { id: "gpt-5-nano", label: "GPT 5 Nano", strength: "قوی", tone: "strong" },
-  { id: "gpt-4.1-nano", label: "GPT 4.1 Nano", strength: "ضعیف", tone: "weak" },
-  { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", strength: "متوسط", tone: "medium" },
-  { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", strength: "قوی", tone: "strong" },
-  { id: "gpt-4o-mini", label: "GPT 4o Mini", strength: "متوسط", tone: "medium" },
-  { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite", strength: "قوی", tone: "strong" },
+const MODEL_PROVIDERS = [
+  {
+    id: "gpt",
+    label: "GPT",
+    models: [
+      { id: "gpt-5.4-nano", label: "GPT 5.4 Nano", strength: "ضعیف", tone: "weak" },
+      { id: "gpt-5.4-mini", label: "GPT 5.4 Mini", strength: "متوسط", tone: "medium" },
+      { id: "gpt-5.4", label: "GPT 5.4", strength: "قوی", tone: "strong" },
+    ],
+  },
+  {
+    id: "gemini",
+    label: "Gemini",
+    models: [
+      { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", strength: "متوسط", tone: "medium" },
+      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", strength: "قوی", tone: "strong" },
+      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", strength: "قوی", tone: "strong" },
+    ],
+  },
 ];
+const MODEL_OPTIONS = MODEL_PROVIDERS.flatMap((provider) => provider.models);
 const THEME_MODES = ["auto", "light", "dark"];
 
 const emptyStateEl = document.getElementById("emptyState");
@@ -41,6 +52,8 @@ const savedImagesGridEl = document.getElementById("savedImagesGrid");
 const topbarTitleEl = document.getElementById("topbarTitle");
 const modelPickerBtnEl = document.getElementById("modelPickerBtn");
 const modelMenuEl = document.getElementById("modelMenu");
+const modelQuickBtnEl = document.getElementById("modelQuickBtn");
+const modelQuickMenuEl = document.getElementById("modelQuickMenu");
 const imageModeTitleEl = document.getElementById("imageModeTitle");
 const chatComposerEl = document.getElementById("chatComposer");
 const imageResultModalEl = document.getElementById("imageResultModal");
@@ -73,6 +86,9 @@ function readStoredModel() {
 function getSelectedModel() {
   return MODEL_OPTIONS.find((option) => option.id === selectedModelId) || MODEL_OPTIONS.find((option) => option.id === DEFAULT_MODEL_ID);
 }
+function getProviderForModel(modelId) {
+  return MODEL_PROVIDERS.find((provider) => provider.models.some((model) => model.id === modelId)) || MODEL_PROVIDERS[0];
+}
 function persistSelectedModel() {
   try { localStorage.setItem(MODEL_STORAGE_KEY, selectedModelId); } catch { /* localStorage may be unavailable */ }
 }
@@ -82,19 +98,31 @@ async function syncSelectedModelToServer(modelId, previousModelId = selectedMode
       method: "PATCH",
       body: JSON.stringify({ model: modelId }),
     });
-    if (state && state.chatModel) setSelectedModel(state.chatModel, true);
+    if (state && state.chatModel) {
+      setSelectedModel(state.chatModel, true);
+      renderModelQuickMenu();
+    }
   } catch (error) {
     setSelectedModel(previousModelId, true);
+    renderModelQuickMenu();
     console.error("Model update failed:", error);
   }
 }
 function setSelectedModel(modelId, persist = false) {
   const option = MODEL_OPTIONS.find((item) => item.id === modelId) || MODEL_OPTIONS.find((item) => item.id === DEFAULT_MODEL_ID);
+  const provider = getProviderForModel(option.id);
   selectedModelId = option.id;
-  if (topbarTitleEl) topbarTitleEl.textContent = option.label;
-  if (modelPickerBtnEl) modelPickerBtnEl.title = option.label;
+  if (topbarTitleEl) topbarTitleEl.textContent = provider.label;
+  if (modelPickerBtnEl) modelPickerBtnEl.title = provider.label;
+  if (modelQuickBtnEl) modelQuickBtnEl.title = `${provider.label}: ${option.label}`;
   if (modelMenuEl) {
-    modelMenuEl.querySelectorAll(".model-option").forEach((button) => {
+    modelMenuEl.querySelectorAll("[data-provider]").forEach((button) => {
+      const isSelected = button.dataset.provider === provider.id;
+      button.setAttribute("aria-selected", String(isSelected));
+    });
+  }
+  if (modelQuickMenuEl) {
+    modelQuickMenuEl.querySelectorAll("[data-model]").forEach((button) => {
       const isSelected = button.dataset.model === selectedModelId;
       button.setAttribute("aria-selected", String(isSelected));
     });
@@ -110,6 +138,7 @@ function closeModelMenu() {
 }
 function openModelMenu() {
   if (!modelMenuEl || currentMode !== "chat") return;
+  closeModelQuickMenu();
   modelMenuEl.hidden = false;
   modelMenuEl.classList.add("open");
   if (modelPickerBtnEl) modelPickerBtnEl.setAttribute("aria-expanded", "true");
@@ -118,6 +147,25 @@ function toggleModelMenu() {
   if (modelMenuEl && modelMenuEl.classList.contains("open")) closeModelMenu();
   else openModelMenu();
 }
+function closeModelQuickMenu() {
+  if (modelQuickMenuEl) {
+    modelQuickMenuEl.hidden = true;
+    modelQuickMenuEl.classList.remove("open");
+  }
+  if (modelQuickBtnEl) modelQuickBtnEl.setAttribute("aria-expanded", "false");
+}
+function openModelQuickMenu() {
+  if (!modelQuickMenuEl || currentMode !== "chat") return;
+  closeModelMenu();
+  renderModelQuickMenu();
+  modelQuickMenuEl.hidden = false;
+  modelQuickMenuEl.classList.add("open");
+  if (modelQuickBtnEl) modelQuickBtnEl.setAttribute("aria-expanded", "true");
+}
+function toggleModelQuickMenu() {
+  if (modelQuickMenuEl && modelQuickMenuEl.classList.contains("open")) closeModelQuickMenu();
+  else openModelQuickMenu();
+}
 function renderModelMenu() {
   if (!modelMenuEl) return;
   modelMenuEl.innerHTML = "";
@@ -125,21 +173,21 @@ function renderModelMenu() {
   heading.className = "model-menu-heading";
   heading.textContent = "مدل‌های گفتگو";
   modelMenuEl.appendChild(heading);
-  MODEL_OPTIONS.forEach((option) => {
+  MODEL_PROVIDERS.forEach((provider) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "model-option";
-    button.dataset.model = option.id;
+    button.dataset.provider = provider.id;
     button.setAttribute("role", "option");
-    button.setAttribute("aria-selected", String(option.id === selectedModelId));
+    button.setAttribute("aria-selected", String(provider.id === getProviderForModel(selectedModelId).id));
 
     const name = document.createElement("span");
     name.className = "model-option-name";
-    name.textContent = option.label;
+    name.textContent = provider.label;
 
-    const strength = document.createElement("span");
-    strength.className = `model-strength model-strength-${option.tone}`;
-    strength.textContent = option.strength;
+    const modelCount = document.createElement("span");
+    modelCount.className = "model-option-count";
+    modelCount.textContent = `${provider.models.length} مدل`;
 
     const check = document.createElement("span");
     check.className = "model-option-check";
@@ -147,15 +195,43 @@ function renderModelMenu() {
     check.textContent = "✓";
 
     button.appendChild(name);
-    button.appendChild(strength);
+    button.appendChild(modelCount);
     button.appendChild(check);
+    button.addEventListener("click", () => {
+      const previousModelId = selectedModelId;
+      const currentProvider = getProviderForModel(selectedModelId);
+      const nextModelId = currentProvider.id === provider.id
+        ? selectedModelId
+        : provider.models[0].id;
+      setSelectedModel(nextModelId, true);
+      renderModelQuickMenu();
+      void syncSelectedModelToServer(nextModelId, previousModelId);
+      closeModelMenu();
+    });
+    modelMenuEl.appendChild(button);
+  });
+  setSelectedModel(selectedModelId);
+}
+function renderModelQuickMenu() {
+  if (!modelQuickMenuEl) return;
+  modelQuickMenuEl.innerHTML = "";
+  const provider = getProviderForModel(selectedModelId);
+  provider.models.forEach((option) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "model-quick-chip";
+    button.dataset.model = option.id;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(option.id === selectedModelId));
+    button.textContent = option.id;
+    button.title = option.label;
     button.addEventListener("click", () => {
       const previousModelId = selectedModelId;
       setSelectedModel(option.id, true);
       void syncSelectedModelToServer(option.id, previousModelId);
-      closeModelMenu();
+      closeModelQuickMenu();
     });
-    modelMenuEl.appendChild(button);
+    modelQuickMenuEl.appendChild(button);
   });
   setSelectedModel(selectedModelId);
 }
@@ -745,6 +821,7 @@ function createChatItem(chat) {
 function updateSendingState(value) {
   isSending = value;
   if (sendBtnEl) sendBtnEl.disabled = value;
+  if (modelQuickBtnEl) modelQuickBtnEl.disabled = value;
   if (userInputEl) userInputEl.disabled = value;
 }
 function showLoadingIndicator(userMsgId) {
@@ -891,6 +968,7 @@ async function handleNewChat() {
 }
 function handleOverlayClick() {
   closeModelMenu();
+  closeModelQuickMenu();
   closeDrawer();
   closeProfileModal();
   closeImageResultModal();
@@ -939,6 +1017,7 @@ function switchMode(mode) {
     renderActiveChat();
     scrollToBottom();
   } else {
+    closeModelQuickMenu();
     chatMainEl.style.display = "none";
     imageGenSectionEl.style.display = "flex";
     hideChatModelPicker();
@@ -1102,6 +1181,7 @@ async function initializeState() {
   const state = await apiRequest("/api/state");
   if (state.chatModel && MODEL_OPTIONS.some((option) => option.id === state.chatModel)) {
     setSelectedModel(state.chatModel, true);
+    renderModelQuickMenu();
   }
   setProfile(state.profile || {});
   applyTheme(state.theme || "auto", false);
@@ -1114,6 +1194,7 @@ async function initializeState() {
   autoResizeTextarea();
 }
 if (sendBtnEl) sendBtnEl.addEventListener("click", (event) => { event.preventDefault(); void sendMessage(); });
+if (modelQuickBtnEl) modelQuickBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleModelQuickMenu(); });
 if (userInputEl) userInputEl.addEventListener("input", autoResizeTextarea);
 if (modelPickerBtnEl) modelPickerBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleModelMenu(); });
 if (menuBtnEl) menuBtnEl.addEventListener("click", openDrawer);
@@ -1139,11 +1220,14 @@ if (closeImageResultBtnEl) closeImageResultBtnEl.addEventListener("click", close
 if (saveImageResultBtnEl) saveImageResultBtnEl.addEventListener("click", handleSaveImageResult);
 if (discardImageResultBtnEl) discardImageResultBtnEl.addEventListener("click", handleDiscardImageResult);
 document.addEventListener("click", (event) => {
-  if (!modelMenuEl || !modelPickerBtnEl) return;
-  if (!modelMenuEl.contains(event.target) && !modelPickerBtnEl.contains(event.target)) closeModelMenu();
+  if (modelMenuEl && modelPickerBtnEl && !modelMenuEl.contains(event.target) && !modelPickerBtnEl.contains(event.target)) closeModelMenu();
+  if (modelQuickMenuEl && modelQuickBtnEl && !modelQuickMenuEl.contains(event.target) && !modelQuickBtnEl.contains(event.target)) closeModelQuickMenu();
 });
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeModelMenu();
+  if (event.key === "Escape") {
+    closeModelMenu();
+    closeModelQuickMenu();
+  }
 });
 
 const deleteConfirmModalHTML = `
@@ -1174,5 +1258,6 @@ document.getElementById("cancelDeleteBtn").addEventListener("click", closeDelete
 document.getElementById("confirmDeleteBtn").addEventListener("click", confirmDeleteChat);
 
 renderModelMenu();
+renderModelQuickMenu();
 setSelectedModel(selectedModelId);
 void initializeState();

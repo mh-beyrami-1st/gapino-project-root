@@ -61,7 +61,7 @@
         </svg>
       </button>
       <button type="button" class="topbar-title model-picker-trigger" id="modelPickerBtn" aria-haspopup="listbox" aria-expanded="false" aria-label="انتخاب مدل">
-        <span id="topbarTitle">Gemini 3.1 Flash Lite</span>
+        <span id="topbarTitle">GPT</span>
         <svg class="model-picker-chevron" viewBox="0 0 24 24" aria-hidden="true">
           <path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
@@ -134,6 +134,14 @@
       <div class="composer-inner">
         <textarea id="userInput" class="composer-input" rows="1" aria-label="نوشتن پیام" placeholder=" "></textarea>
         <div class="composer-watermark" id="composerWatermark">پیام خود را بنویسید...</div>
+        <div id="modelQuickMenu" class="model-quick-menu" role="listbox" aria-label="انتخاب مدل دقیق" hidden></div>
+        <button type="button" id="modelQuickBtn" class="model-more-btn" aria-label="انتخاب مدل دقیق" aria-haspopup="listbox" aria-expanded="false">
+          <svg viewBox="0 0 24 24" class="icon-more" aria-hidden="true">
+            <circle cx="5" cy="12" r="1.7"></circle>
+            <circle cx="12" cy="12" r="1.7"></circle>
+            <circle cx="19" cy="12" r="1.7"></circle>
+          </svg>
+        </button>
         <button type="button" id="sendBtn" class="send-btn" aria-label="ارسال پیام">
           <svg viewBox="0 0 24 24" class="icon-send" aria-hidden="true">
             <path d="M12 19V5m0 0 6 6m-6-6-6 6" />

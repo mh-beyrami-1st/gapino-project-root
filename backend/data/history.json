@@ -6,15 +6,32 @@
     "systemPrompt": "",
     "responseStyle": ""
   },
-  "theme": "dark",
-  "activeConversationId": "1787681849_a544c661",
+  "theme": "auto",
+  "activeConversationId": "1789072789_1cc8f9be",
   "conversations": [
     {
-      "id": "1787681849_a544c661",
-      "title": "گفت‌وگوی جدید",
-      "messages": [],
-      "createdAt": 1787681849,
-      "updatedAt": 1787681849
+      "id": "1789072789_1cc8f9be",
+      "title": "احوالپرسی",
+      "messages": [
+        {
+          "role": "user",
+          "content": "سلام\nخوبی؟"
+        },
+        {
+          "role": "assistant",
+          "content": "سلام! ممنونم، خوبم. شما چطورید؟\n\nچطور می‌تونم کمکتون کنم؟"
+        },
+        {
+          "role": "user",
+          "content": "خوبی؟"
+        },
+        {
+          "role": "assistant",
+          "content": "ممنونم که دوباره پرسیدید. بله، همچنان خوبم! 😊\n\nامیدوارم شما هم خوب و سرحال باشید.\n\nدر خدمتم، بفرمایید."
+        }
+      ],
+      "createdAt": 1789072789,
+      "updatedAt": 1789108943
     }
   ],
   "savedImages": []

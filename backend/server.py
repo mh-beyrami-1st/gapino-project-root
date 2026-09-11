@@ -30,17 +30,15 @@ IMAGE_API_URL = os.getenv("IMAGE_API_URL")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL")
 IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1024x1024")
 ENV_PATH = BASE_DIR / ".env"
-PROMPT_MODEL = "gemini-3.1-flash-lite"
+PROMPT_MODEL = "gemini-2.5-flash-lite"
 SUPPORTED_CHAT_MODELS = frozenset(
     {
-        "glm-4-flash",
-        "gemma-3-27b-it",
-        "gpt-5-nano",
-        "gpt-4.1-nano",
+        "gpt-5.4-nano",
+        "gpt-5.4-mini",
+        "gpt-5.4",
         "gemini-2.5-flash-lite",
-        "deepseek-v4-flash",
-        "gpt-4o-mini",
-        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
     }
 )
 
