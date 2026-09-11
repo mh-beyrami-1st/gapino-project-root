@@ -1,4 +1,3 @@
-import hashlib
 import hmac
 import json
 import os
@@ -30,7 +29,7 @@ HOST = "0.0.0.0"
 GAPGPT_API_KEY = os.getenv("GAPGPT_API_KEY")
 GAPGPT_API_URL = os.getenv("GAPGPT_API_URL")
 CHAT_MODEL = os.getenv("CHAT_MODEL")
-APP_PIN_HASH = os.getenv("APP_PIN_HASH", "")
+APP_PIN = os.getenv("APP_PIN", "")
 ENV_PATH = BASE_DIR / ".env"
 PROMPT_MODEL = "gemini-2.5-flash-lite"
 SESSION_TTL = 60 * 60 * 24 * 30  # 30 days
@@ -52,8 +51,8 @@ if not GAPGPT_API_URL:
     raise RuntimeError("Missing GAPGPT_API_URL in .env")
 if not CHAT_MODEL:
     raise RuntimeError("Missing CHAT_MODEL in .env")
-if not APP_PIN_HASH:
-    raise RuntimeError("Missing APP_PIN_HASH in .env")
+if not APP_PIN:
+    raise RuntimeError("Missing APP_PIN in .env")
 
 
 @contextmanager
@@ -132,14 +131,13 @@ def json_error(message, status=400, **extra):
 # Authentication helpers
 # ---------------------------------------------------------------------------
 
-def _hash_pin(pin: str) -> str:
-    return "sha256:" + hashlib.sha256(pin.encode("utf-8")).hexdigest()
-
-
 def verify_pin(pin: str) -> bool:
-    if not APP_PIN_HASH or not pin:
+    if not APP_PIN or not pin:
         return False
-    return hmac.compare_digest(_hash_pin(pin), APP_PIN_HASH)
+    return hmac.compare_digest(
+        str(pin).strip().encode("utf-8"),
+        str(APP_PIN).strip().encode("utf-8"),
+    )
 
 
 def issue_session_token() -> str:
