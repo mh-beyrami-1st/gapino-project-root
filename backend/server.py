@@ -16,7 +16,15 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 FRONTEND_DIR = BASE_DIR / "frontend"
-DATABASE_PATH = BASE_DIR / "backend" / "data" / "database.db"
+# Vercel's deployed filesystem is read-only; only /tmp is writable there.
+# Keep a local default for development, while allowing an explicit override
+# for deployments that provide a persistent database location.
+if os.getenv("DATABASE_PATH"):
+    DATABASE_PATH = Path(os.environ["DATABASE_PATH"])
+elif os.getenv("VERCEL"):
+    DATABASE_PATH = Path("/tmp/gapino-database.db")
+else:
+    DATABASE_PATH = BASE_DIR / "backend" / "data" / "database.db"
 DATABASE_LOCK = RLock()
 ENV_LOCK = RLock()
 
