@@ -17,7 +17,27 @@
   <script defer src="/app.js"></script>
 </head>
 <body>
-  <div id="app" class="app">
+  <div id="pinGate" class="pin-gate" aria-hidden="false">
+    <form id="pinForm" class="pin-card" autocomplete="off">
+      <h1 class="pin-title">گپینو</h1>
+      <p class="pin-subtitle">برای ورود، پین را وارد کنید</p>
+      <input
+        id="pinInput"
+        class="pin-input"
+        type="password"
+        inputmode="numeric"
+        pattern="[0-9]*"
+        maxlength="12"
+        placeholder="••••••"
+        autocomplete="off"
+        aria-label="پین"
+      />
+      <p id="pinError" class="pin-error" hidden>پین نامعتبر است</p>
+      <button type="submit" class="primary-btn full" id="pinSubmit">ورود</button>
+    </form>
+  </div>
+
+  <div id="app" class="app" aria-hidden="true">
     <div id="overlay" class="overlay" aria-hidden="true"></div>
     <aside id="drawer" class="drawer" aria-label="منوی گفتگوها">
       <header class="drawer-header">

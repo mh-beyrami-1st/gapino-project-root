@@ -4,8 +4,8 @@ const MODEL_STORAGE_KEY = "gapino.selectedModel";
 const MODEL_PROVIDERS = [
   {
     id: "gpt",
-    label: "GPT",
-    subtitle: "اوپن اِی آی",
+    label: "GPT 5.4",
+    subtitle: "OpenAI",
     models: [
       { id: "gpt-5.4-nano", label: "GPT 5.4 Nano", strength: "ضعیف", tone: "weak" },
       { id: "gpt-5.4-mini", label: "GPT 5.4 Mini", strength: "متوسط", tone: "medium" },
@@ -14,8 +14,8 @@ const MODEL_PROVIDERS = [
   },
   {
     id: "gemini",
-    label: "Gemini",
-    subtitle: "گوگل",
+    label: "Gemini 2.5",
+    subtitle: "Google",
     models: [
       { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", strength: "متوسط", tone: "medium" },
       { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", strength: "قوی", tone: "strong" },
@@ -25,6 +25,12 @@ const MODEL_PROVIDERS = [
 ];
 const MODEL_OPTIONS = MODEL_PROVIDERS.flatMap((provider) => provider.models);
 const THEME_MODES = ["auto", "light", "dark"];
+
+const pinGateEl = document.getElementById("pinGate");
+const pinFormEl = document.getElementById("pinForm");
+const pinInputEl = document.getElementById("pinInput");
+const pinErrorEl = document.getElementById("pinError");
+const appEl = document.getElementById("app");
 
 const emptyStateEl = document.getElementById("emptyState");
 const messagesSectionEl = document.getElementById("messagesSection");
@@ -61,6 +67,7 @@ let currentTheme = "auto";
 let isSending = false;
 let pendingDeleteChatId = null;
 let selectedModelId = readStoredModel();
+let appInitialized = false;
 
 function nowTs() { return Date.now(); }
 function readStoredModel() {
@@ -237,15 +244,26 @@ function sortChats() {
   chats.sort((a, b) => {
     const diff = toNumber(b.updatedAt, 0) - toNumber(a.updatedAt, 0);
     if (diff !== 0) return diff;
-    return toNumber(b.createdAt, 0) - toNumber(b.createdAt, 0);
+    return toNumber(b.createdAt, 0) - toNumber(a.createdAt, 0);
   });
 }
 async function apiRequest(path, options = {}) {
-  const init = { ...options, headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) } };
+  const init = {
+    ...options,
+    credentials: "same-origin",
+    headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) },
+  };
   const response = await fetch(path, init);
   const text = await response.text();
   let data = null;
   if (text) { try { data = JSON.parse(text); } catch { data = { raw: text }; } }
+  if (response.status === 401 && !path.startsWith("/api/auth/")) {
+    showPinGate();
+    const error = new Error("Authentication required");
+    error.status = 401;
+    error.data = data;
+    throw error;
+  }
   if (!response.ok) {
     const error = new Error((data && data.error) || `Request failed with status ${response.status}`);
     error.status = response.status;
@@ -452,7 +470,6 @@ function renderMarkdownToHtml(markdown) {
     if (/^(?:---|\*\*\*|___)$/.test(trimmed)) { closeList(); html.push("<hr>"); continue; }
     if (!trimmed) {
       closeList();
-      // Paragraph spacing is handled by CSS; an extra <br> here doubles the gap.
       continue;
     }
     if (/^#{1,6}\s+/.test(trimmed)) {
@@ -953,6 +970,8 @@ async function saveProfile() {
   setProfile(data.profile || profile);
 }
 async function initializeState() {
+  if (appInitialized) return;
+  appInitialized = true;
   applyTheme("auto", false);
   const state = await apiRequest("/api/state");
   if (state.chatModel && MODEL_OPTIONS.some((option) => option.id === state.chatModel)) {
@@ -969,6 +988,65 @@ async function initializeState() {
   renderActiveChat();
   autoResizeTextarea();
 }
+
+/* ----------------------------------------------------------------------- */
+/* Auth (PIN)                                                               */
+/* ----------------------------------------------------------------------- */
+async function checkAuth() {
+  try {
+    const res = await fetch("/api/auth/status", { credentials: "same-origin" });
+    const data = await res.json();
+    return !!(data && data.authenticated);
+  } catch {
+    return false;
+  }
+}
+function showPinGate() {
+  if (pinGateEl) pinGateEl.setAttribute("aria-hidden", "false");
+  if (appEl) appEl.setAttribute("aria-hidden", "true");
+  if (pinInputEl) pinInputEl.focus();
+}
+function hidePinGate() {
+  if (pinGateEl) pinGateEl.setAttribute("aria-hidden", "true");
+  if (appEl) appEl.setAttribute("aria-hidden", "false");
+}
+async function submitPin(pin) {
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ pin }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+if (pinFormEl) {
+  pinFormEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const pin = pinInputEl ? pinInputEl.value.trim() : "";
+    if (!pin) return;
+    if (pinErrorEl) pinErrorEl.hidden = true;
+    const ok = await submitPin(pin);
+    if (ok) {
+      hidePinGate();
+      if (pinInputEl) pinInputEl.value = "";
+      await initializeState();
+    } else {
+      if (pinErrorEl) pinErrorEl.hidden = false;
+      if (pinInputEl) {
+        pinInputEl.value = "";
+        pinInputEl.focus();
+      }
+    }
+  });
+}
+
+/* ----------------------------------------------------------------------- */
+/* Boot                                                                     */
+/* ----------------------------------------------------------------------- */
 if (sendBtnEl) sendBtnEl.addEventListener("click", (event) => { event.preventDefault(); void sendMessage(); });
 if (modelQuickBtnEl) modelQuickBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleModelQuickMenu(); });
 if (modelQuickRangeEl) {
@@ -1045,4 +1123,13 @@ document.getElementById("confirmDeleteBtn").addEventListener("click", confirmDel
 renderModelMenu();
 renderModelQuickMenu();
 setSelectedModel(selectedModelId);
-void initializeState();
+
+(async () => {
+  const authed = await checkAuth();
+  if (authed) {
+    hidePinGate();
+    await initializeState();
+  } else {
+    showPinGate();
+  }
+})();

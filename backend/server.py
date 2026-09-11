@@ -1,5 +1,8 @@
+import hashlib
+import hmac
 import json
 import os
+import secrets
 import sqlite3
 import tempfile
 import time
@@ -27,8 +30,11 @@ HOST = "0.0.0.0"
 GAPGPT_API_KEY = os.getenv("GAPGPT_API_KEY")
 GAPGPT_API_URL = os.getenv("GAPGPT_API_URL")
 CHAT_MODEL = os.getenv("CHAT_MODEL")
+APP_PIN_HASH = os.getenv("APP_PIN_HASH", "")
 ENV_PATH = BASE_DIR / ".env"
 PROMPT_MODEL = "gemini-2.5-flash-lite"
+SESSION_TTL = 60 * 60 * 24 * 30  # 30 days
+SESSION_COOKIE_NAME = "gapino_session"
 SUPPORTED_CHAT_MODELS = frozenset(
     {
         "gpt-5.4-nano",
@@ -46,6 +52,8 @@ if not GAPGPT_API_URL:
     raise RuntimeError("Missing GAPGPT_API_URL in .env")
 if not CHAT_MODEL:
     raise RuntimeError("Missing CHAT_MODEL in .env")
+if not APP_PIN_HASH:
+    raise RuntimeError("Missing APP_PIN_HASH in .env")
 
 
 @contextmanager
@@ -90,6 +98,13 @@ def initialize_database():
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_sessions_expires
+                ON sessions(expires_at);
             """
         )
         connection.commit()
@@ -102,13 +117,73 @@ DEFAULT_THEME = "auto"
 DEFAULT_ACTIVE_CONVERSATION_ID = None
 DEFAULT_CONVERSATION_TITLE = "گفت‌وگوی جدید"
 
+
 def now_ts():
     return int(time.time())
+
 
 def json_error(message, status=400, **extra):
     payload = {"error": message}
     payload.update(extra)
     return jsonify(payload), status
+
+
+# ---------------------------------------------------------------------------
+# Authentication helpers
+# ---------------------------------------------------------------------------
+
+def _hash_pin(pin: str) -> str:
+    return "sha256:" + hashlib.sha256(pin.encode("utf-8")).hexdigest()
+
+
+def verify_pin(pin: str) -> bool:
+    if not APP_PIN_HASH or not pin:
+        return False
+    return hmac.compare_digest(_hash_pin(pin), APP_PIN_HASH)
+
+
+def issue_session_token() -> str:
+    token = secrets.token_urlsafe(32)
+    now = now_ts()
+    with DATABASE_LOCK:
+        with database_connection() as connection:
+            with connection:
+                connection.execute(
+                    "INSERT INTO sessions (token, created_at, expires_at) VALUES (?, ?, ?)",
+                    (token, now, now + SESSION_TTL),
+                )
+                connection.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+    return token
+
+
+def is_valid_session(token: str) -> bool:
+    if not token:
+        return False
+    now = now_ts()
+    with DATABASE_LOCK:
+        with database_connection() as connection:
+            row = connection.execute(
+                "SELECT expires_at FROM sessions WHERE token = ?", (token,)
+            ).fetchone()
+    return bool(row and row["expires_at"] > now)
+
+
+def revoke_session(token: str) -> None:
+    if not token:
+        return
+    with DATABASE_LOCK:
+        with database_connection() as connection:
+            with connection:
+                connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+
+def get_session_token() -> str:
+    return request.cookies.get(SESSION_COOKIE_NAME, "")
+
+
+# ---------------------------------------------------------------------------
+# Model persistence
+# ---------------------------------------------------------------------------
 
 def persist_chat_model(model):
     """Update the running chat model and persist it in the project .env file."""
@@ -153,6 +228,11 @@ def persist_chat_model(model):
         os.environ["CHAT_MODEL"] = model
     return CHAT_MODEL
 
+
+# ---------------------------------------------------------------------------
+# State helpers
+# ---------------------------------------------------------------------------
+
 def default_state():
     return {
         "version": 2,
@@ -161,6 +241,7 @@ def default_state():
         "activeConversationId": DEFAULT_ACTIVE_CONVERSATION_ID,
         "conversations": [],
     }
+
 
 def normalize_message(message):
     if not isinstance(message, dict):
@@ -175,6 +256,7 @@ def normalize_message(message):
     if "name" in message:
         normalized["name"] = str(message.get("name") or "")
     return normalized
+
 
 def normalize_state(state):
     if not isinstance(state, dict):
@@ -247,6 +329,7 @@ def normalize_state(state):
         "activeConversationId": active_id,
         "conversations": normalized_conversations,
     }
+
 
 def _load_store_unlocked():
     """Read the application state from SQLite into the API's state shape."""
@@ -346,6 +429,7 @@ def update_store(mutator):
         state = _save_store_unlocked(state)
         return state, result
 
+
 def get_conversation(state, conversation_id):
     conversation_id = str(conversation_id)
     for conversation in state["conversations"]:
@@ -353,11 +437,13 @@ def get_conversation(state, conversation_id):
             return conversation
     return None
 
+
 def sort_conversations(state):
     state["conversations"].sort(
         key=lambda item: (item.get("updatedAt", 0), item.get("createdAt", 0)),
         reverse=True,
     )
+
 
 def conversation_summary(conversation):
     messages = conversation.get("messages") or []
@@ -370,6 +456,7 @@ def conversation_summary(conversation):
         "lastMessage": messages[-1] if messages else None,
     }
 
+
 def serialize_conversation(conversation):
     return {
         "id": conversation["id"],
@@ -378,6 +465,7 @@ def serialize_conversation(conversation):
         "createdAt": conversation.get("createdAt"),
         "updatedAt": conversation.get("updatedAt"),
     }
+
 
 def create_conversation(state, title=None):
     timestamp = now_ts()
@@ -391,6 +479,7 @@ def create_conversation(state, title=None):
     state["conversations"].insert(0, conversation)
     state["activeConversationId"] = conversation["id"]
     return conversation
+
 
 def build_system_prompt(profile):
     parts = [
@@ -411,6 +500,7 @@ def build_system_prompt(profile):
         parts.append(f"Preferred response style: {style}")
     return "\n".join(parts)
 
+
 def request_upstream_chat(messages, model=None):
     payload = {"model": model or CHAT_MODEL, "messages": messages}
     response = requests.post(
@@ -424,6 +514,7 @@ def request_upstream_chat(messages, model=None):
     except ValueError:
         data = {"raw": response.text}
     return response.status_code, data
+
 
 def extract_assistant_content(data):
     if not isinstance(data, dict):
@@ -443,6 +534,7 @@ def extract_assistant_content(data):
     if isinstance(raw, str) and raw.strip():
         return raw.strip()
     return ""
+
 
 def generate_conversation_title(user_content):
     if not user_content:
@@ -474,6 +566,75 @@ def generate_conversation_title(user_content):
     except Exception:
         return user_content[:30].strip()
 
+
+# ---------------------------------------------------------------------------
+# Auth middleware + endpoints
+# ---------------------------------------------------------------------------
+
+PUBLIC_API_PATHS = {
+    "/api/auth/login",
+    "/api/auth/status",
+}
+
+
+@app.before_request
+def require_auth():
+    path = request.path or ""
+    # Public API endpoints
+    if path in PUBLIC_API_PATHS:
+        return None
+    # Only guard API routes; static/front-end assets are served freely
+    if not path.startswith("/api/"):
+        return None
+    token = get_session_token()
+    if not is_valid_session(token):
+        return json_error("Authentication required", 401)
+    return None
+
+
+@app.get("/api/auth/status")
+def auth_status():
+    token = get_session_token()
+    return jsonify({"authenticated": is_valid_session(token)})
+
+
+@app.post("/api/auth/login")
+def auth_login():
+    if not request.is_json:
+        return json_error("Request must be JSON", 415)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return json_error("Invalid JSON body", 400)
+    pin = str(payload.get("pin") or "")
+    if not verify_pin(pin):
+        return json_error("Invalid PIN", 401)
+    token = issue_session_token()
+    response = jsonify({"ok": True})
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        max_age=SESSION_TTL,
+        httponly=True,
+        samesite="Lax",
+        secure=request.is_secure,
+        path="/",
+    )
+    return response
+
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    token = get_session_token()
+    revoke_session(token)
+    response = jsonify({"ok": True})
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Frontend
+# ---------------------------------------------------------------------------
+
 @app.get("/")
 def root():
     return send_from_directory(FRONTEND_DIR, "index.html")
@@ -489,17 +650,10 @@ def frontend_files(frontend_path):
         return send_from_directory(FRONTEND_DIR, frontend_path)
     return send_from_directory(FRONTEND_DIR, "index.html")
 
-@app.get("/api/auth/me")
-def auth_me():
-    return jsonify({"user": {"username": "local", "local": True}})
 
-@app.post("/api/auth/login")
-def auth_login_compatibility():
-    return jsonify({"user": {"username": "local", "local": True}})
-
-@app.post("/api/auth/logout")
-def auth_logout_compatibility():
-    return jsonify({"ok": True})
+# ---------------------------------------------------------------------------
+# State / model endpoints
+# ---------------------------------------------------------------------------
 
 @app.get("/api/state")
 def get_state():
@@ -515,9 +669,11 @@ def get_state():
         }
     )
 
+
 @app.get("/api/model")
 def get_model():
     return jsonify({"chatModel": CHAT_MODEL, "promptModel": PROMPT_MODEL})
+
 
 @app.patch("/api/model")
 def patch_model():
@@ -539,6 +695,7 @@ def patch_model():
         return json_error("Failed to persist model configuration", 500)
     return jsonify({"chatModel": selected_model, "promptModel": PROMPT_MODEL})
 
+
 @app.patch("/api/state")
 def patch_state():
     if not request.is_json:
@@ -547,6 +704,7 @@ def patch_state():
     if not isinstance(payload, dict):
         return json_error("Invalid JSON body", 400)
     validation_error = None
+
     def mutate(state):
         nonlocal validation_error
         if "activeConversationId" in payload:
@@ -573,6 +731,7 @@ def patch_state():
             for key in DEFAULT_PROFILE:
                 if key in profile:
                     state["profile"][key] = str(profile.get(key) or "")
+
     state, _ = update_store(mutate)
     if validation_error:
         return json_error(*validation_error)
@@ -586,10 +745,12 @@ def patch_state():
         }
     )
 
+
 @app.get("/api/profile")
 def get_profile():
     state = load_store()
     return jsonify({"profile": state["profile"]})
+
 
 @app.patch("/api/profile")
 def patch_profile():
@@ -598,17 +759,21 @@ def patch_profile():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return json_error("Invalid JSON body", 400)
+
     def mutate(state):
         for key in DEFAULT_PROFILE:
             if key in payload:
                 state["profile"][key] = str(payload.get(key) or "")
+
     state, _ = update_store(mutate)
     return jsonify({"profile": state["profile"]})
+
 
 @app.get("/api/theme")
 def get_theme():
     state = load_store()
     return jsonify({"theme": state["theme"]})
+
 
 @app.patch("/api/theme")
 def patch_theme():
@@ -620,10 +785,13 @@ def patch_theme():
     theme = str(payload.get("theme") or "").strip()
     if theme not in {"auto", "light", "dark"}:
         return json_error("Invalid theme", 400)
+
     def mutate(state):
         state["theme"] = theme
+
     update_store(mutate)
     return jsonify({"theme": theme})
+
 
 @app.get("/api/conversations")
 def list_conversations():
@@ -636,16 +804,20 @@ def list_conversations():
         }
     )
 
+
 @app.post("/api/conversations")
 def create_conversation_endpoint():
     payload = request.get_json(silent=True) if request.is_json else {}
     if not isinstance(payload, dict):
         payload = {}
+
     def mutate(state):
         return create_conversation(state, payload.get("title"))
+
     state, created = update_store(mutate)
     conversation = get_conversation(state, created["id"])
     return jsonify({"conversation": serialize_conversation(conversation)}), 201
+
 
 @app.get("/api/conversations/<conversation_id>")
 def get_conversation_endpoint(conversation_id):
@@ -655,6 +827,7 @@ def get_conversation_endpoint(conversation_id):
         return json_error("Conversation not found", 404)
     return jsonify({"conversation": serialize_conversation(conversation)})
 
+
 @app.patch("/api/conversations/<conversation_id>")
 def patch_conversation(conversation_id):
     if not request.is_json:
@@ -663,6 +836,7 @@ def patch_conversation(conversation_id):
     if not isinstance(payload, dict):
         return json_error("Invalid JSON body", 400)
     validation_error = None
+
     def mutate(state):
         nonlocal validation_error
         conversation = get_conversation(state, conversation_id)
@@ -686,15 +860,18 @@ def patch_conversation(conversation_id):
         conversation["updatedAt"] = now_ts()
         sort_conversations(state)
         return conversation["id"]
+
     state, updated_id = update_store(mutate)
     if validation_error:
         return json_error(*validation_error)
     conversation = get_conversation(state, updated_id)
     return jsonify({"conversation": serialize_conversation(conversation)})
 
+
 @app.delete("/api/conversations/<conversation_id>")
 def delete_conversation(conversation_id):
     not_found = False
+
     def mutate(state):
         nonlocal not_found
         index = next(
@@ -711,10 +888,12 @@ def delete_conversation(conversation_id):
         removed = state["conversations"].pop(index)
         if state.get("activeConversationId") == removed["id"]:
             state["activeConversationId"] = state["conversations"][0]["id"] if state["conversations"] else None
+
     update_store(mutate)
     if not_found:
         return json_error("Conversation not found", 404)
     return jsonify({"ok": True})
+
 
 @app.post("/api/conversations/<conversation_id>/messages")
 def post_message(conversation_id):
@@ -729,6 +908,7 @@ def post_message(conversation_id):
     model = str(payload.get("model") or CHAT_MODEL).strip()
     conversation_missing = False
     upstream_messages = None
+
     def append_user_message(state):
         nonlocal conversation_missing
         nonlocal upstream_messages
@@ -739,19 +919,28 @@ def post_message(conversation_id):
         conversation["messages"].append({"role": "user", "content": content})
         conversation["updatedAt"] = now_ts()
         state["activeConversationId"] = conversation["id"]
-        upstream_messages = [{"role": "system", "content": build_system_prompt(state["profile"])}, *conversation["messages"]]
+        upstream_messages = [
+            {"role": "system", "content": build_system_prompt(state["profile"])},
+            *conversation["messages"],
+        ]
         sort_conversations(state)
+
     update_store(append_user_message)
     if conversation_missing:
         return json_error("Conversation not found", 404)
+
     try:
         status_code, data = request_upstream_chat(upstream_messages, model=model)
         assistant_content = extract_assistant_content(data)
         if status_code >= 400:
-            assistant_content = f"خطا در دریافت پاسخ از سرویس مدل.\n\nStatus: {status_code}\nDetails: {assistant_content or data}"
+            assistant_content = (
+                f"خطا در دریافت پاسخ از سرویس مدل.\n\n"
+                f"Status: {status_code}\nDetails: {assistant_content or data}"
+            )
         if not assistant_content:
             assistant_content = "پاسخی دریافت نشد."
         assistant_message = {"role": "assistant", "content": assistant_content}
+
         def append_assistant_message(state):
             conversation = get_conversation(state, conversation_id)
             if conversation is None:
@@ -770,15 +959,23 @@ def post_message(conversation_id):
             state["activeConversationId"] = conversation["id"]
             sort_conversations(state)
             return conversation["id"]
+
         state, updated_id = update_store(append_assistant_message)
         conversation = get_conversation(state, updated_id)
-        response_payload = {"conversation": serialize_conversation(conversation), "assistantMessage": assistant_message}
+        response_payload = {
+            "conversation": serialize_conversation(conversation),
+            "assistantMessage": assistant_message,
+        }
         if status_code >= 400:
             response_payload.update({"error": "Upstream request failed", "status": status_code, "details": data})
             return jsonify(response_payload), 502
         return jsonify(response_payload)
     except requests.RequestException as exc:
-        assistant_message = {"role": "assistant", "content": f"خطا در دریافت پاسخ.\n\n{str(exc) or 'Unknown upstream request failure'}"}
+        assistant_message = {
+            "role": "assistant",
+            "content": f"خطا در دریافت پاسخ.\n\n{str(exc) or 'Unknown upstream request failure'}",
+        }
+
         def append_network_error(state):
             conversation = get_conversation(state, conversation_id)
             if conversation is None:
@@ -787,9 +984,21 @@ def post_message(conversation_id):
             conversation["updatedAt"] = now_ts()
             sort_conversations(state)
             return conversation["id"]
+
         state, updated_id = update_store(append_network_error)
         conversation = get_conversation(state, updated_id)
-        return jsonify({"error": "Upstream request failed", "details": str(exc), "conversation": serialize_conversation(conversation), "assistantMessage": assistant_message}), 502
+        return (
+            jsonify(
+                {
+                    "error": "Upstream request failed",
+                    "details": str(exc),
+                    "conversation": serialize_conversation(conversation),
+                    "assistantMessage": assistant_message,
+                }
+            ),
+            502,
+        )
+
 
 @app.post("/api/chat")
 def chat_legacy():
@@ -815,13 +1024,16 @@ def chat_legacy():
     except requests.RequestException as exc:
         return jsonify({"error": "Upstream request failed", "details": str(exc)}), 502
 
+
 @app.errorhandler(404)
 def not_found(_error):
     return jsonify({"error": "Not found"}), 404
 
+
 @app.errorhandler(500)
 def internal_error(_error):
     return jsonify({"error": "Internal server error"}), 500
+
 
 if __name__ == "__main__":
     app.run(host=HOST, port=PORT, debug=os.getenv("FLASK_DEBUG", "0") == "1")
