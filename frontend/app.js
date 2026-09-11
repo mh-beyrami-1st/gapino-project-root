@@ -5,6 +5,7 @@ const MODEL_PROVIDERS = [
   {
     id: "gpt",
     label: "GPT",
+    subtitle: "اوپن اِی آی",
     models: [
       { id: "gpt-5.4-nano", label: "GPT 5.4 Nano", strength: "ضعیف", tone: "weak" },
       { id: "gpt-5.4-mini", label: "GPT 5.4 Mini", strength: "متوسط", tone: "medium" },
@@ -14,6 +15,7 @@ const MODEL_PROVIDERS = [
   {
     id: "gemini",
     label: "Gemini",
+    subtitle: "گوگل",
     models: [
       { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", strength: "متوسط", tone: "medium" },
       { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", strength: "قوی", tone: "strong" },
@@ -36,7 +38,6 @@ const overlayEl = document.getElementById("overlay");
 const closeDrawerBtnEl = document.getElementById("closeDrawerBtn");
 const newChatBtnEl = document.getElementById("newChatBtn");
 const chatListEl = document.getElementById("chatList");
-const imageGenDrawerBtn = document.getElementById("imageGenDrawerBtn");
 const profileBtnEl = document.getElementById("profileBtn");
 const profileModalEl = document.getElementById("profileModal");
 const closeProfileBtnEl = document.getElementById("closeProfileBtn");
@@ -45,22 +46,12 @@ const profileNameEl = document.getElementById("profileName");
 const profileJobEl = document.getElementById("profileJob");
 const profileSystemPromptEl = document.getElementById("profileSystemPrompt");
 const saveProfileBtnEl = document.getElementById("saveProfileBtn");
-const imageGenSectionEl = document.getElementById("imageGenSection");
-const imagePromptInputEl = document.getElementById("imagePromptInput");
-const imageSendBtnEl = document.getElementById("imageSendBtn");
-const savedImagesGridEl = document.getElementById("savedImagesGrid");
 const topbarTitleEl = document.getElementById("topbarTitle");
 const modelPickerBtnEl = document.getElementById("modelPickerBtn");
 const modelMenuEl = document.getElementById("modelMenu");
 const modelQuickBtnEl = document.getElementById("modelQuickBtn");
 const modelQuickMenuEl = document.getElementById("modelQuickMenu");
-const imageModeTitleEl = document.getElementById("imageModeTitle");
-const chatComposerEl = document.getElementById("chatComposer");
-const imageResultModalEl = document.getElementById("imageResultModal");
-const closeImageResultBtnEl = document.getElementById("closeImageResultBtn");
-const generatedImageEl = document.getElementById("generatedImage");
-const saveImageResultBtnEl = document.getElementById("saveImageResultBtn");
-const discardImageResultBtnEl = document.getElementById("discardImageResultBtn");
+const modelQuickRangeEl = document.getElementById("modelQuickRange");
 const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
 let chats = [];
@@ -68,9 +59,6 @@ let activeChatId = null;
 let currentProfile = { ...DEFAULT_PROFILE };
 let currentTheme = "auto";
 let isSending = false;
-let currentMode = "chat";
-let savedImages = [];
-let pendingImageUrl = null;
 let pendingDeleteChatId = null;
 let selectedModelId = readStoredModel();
 
@@ -137,7 +125,7 @@ function closeModelMenu() {
   if (modelPickerBtnEl) modelPickerBtnEl.setAttribute("aria-expanded", "false");
 }
 function openModelMenu() {
-  if (!modelMenuEl || currentMode !== "chat") return;
+  if (!modelMenuEl) return;
   closeModelQuickMenu();
   modelMenuEl.hidden = false;
   modelMenuEl.classList.add("open");
@@ -155,7 +143,7 @@ function closeModelQuickMenu() {
   if (modelQuickBtnEl) modelQuickBtnEl.setAttribute("aria-expanded", "false");
 }
 function openModelQuickMenu() {
-  if (!modelQuickMenuEl || currentMode !== "chat") return;
+  if (!modelQuickMenuEl) return;
   closeModelMenu();
   renderModelQuickMenu();
   modelQuickMenuEl.hidden = false;
@@ -187,7 +175,7 @@ function renderModelMenu() {
 
     const modelCount = document.createElement("span");
     modelCount.className = "model-option-count";
-    modelCount.textContent = `${provider.models.length} مدل`;
+    modelCount.textContent = provider.subtitle;
 
     const check = document.createElement("span");
     check.className = "model-option-check";
@@ -213,27 +201,14 @@ function renderModelMenu() {
   setSelectedModel(selectedModelId);
 }
 function renderModelQuickMenu() {
-  if (!modelQuickMenuEl) return;
-  modelQuickMenuEl.innerHTML = "";
+  if (!modelQuickMenuEl || !modelQuickRangeEl) return;
   const provider = getProviderForModel(selectedModelId);
-  provider.models.forEach((option) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "model-quick-chip";
-    button.dataset.model = option.id;
-    button.setAttribute("role", "option");
-    button.setAttribute("aria-selected", String(option.id === selectedModelId));
-    button.textContent = option.id;
-    button.title = option.label;
-    button.addEventListener("click", () => {
-      const previousModelId = selectedModelId;
-      setSelectedModel(option.id, true);
-      void syncSelectedModelToServer(option.id, previousModelId);
-      closeModelQuickMenu();
-    });
-    modelQuickMenuEl.appendChild(button);
-  });
-  setSelectedModel(selectedModelId);
+  const selectedIndex = Math.max(0, provider.models.findIndex((option) => option.id === selectedModelId));
+  const maxIndex = Math.max(1, provider.models.length - 1);
+  modelQuickRangeEl.max = String(maxIndex);
+  modelQuickRangeEl.value = String(selectedIndex);
+  modelQuickRangeEl.style.setProperty("--quick-progress", `${(selectedIndex / maxIndex) * 100}%`);
+  modelQuickRangeEl.setAttribute("aria-valuetext", provider.models[selectedIndex]?.label || "");
 }
 function toNumber(value, fallback = nowTs()) {
   const n = Number(value);
@@ -410,9 +385,8 @@ function openOverlay() { if (overlayEl) overlayEl.classList.add("show"); }
 function closeOverlayIfIdle() {
   const drawerOpen = drawerEl && drawerEl.classList.contains("open");
   const profileOpen = profileModalEl && profileModalEl.classList.contains("show");
-  const imageResultOpen = imageResultModalEl && imageResultModalEl.classList.contains("show");
   const deleteConfirmOpen = document.getElementById("deleteConfirmModal") && document.getElementById("deleteConfirmModal").classList.contains("show");
-  if (!drawerOpen && !profileOpen && !imageResultOpen && !deleteConfirmOpen && overlayEl) overlayEl.classList.remove("show");
+  if (!drawerOpen && !profileOpen && !deleteConfirmOpen && overlayEl) overlayEl.classList.remove("show");
 }
 function openDrawer() { if (drawerEl) drawerEl.classList.add("open"); openOverlay(); }
 function closeDrawer() { if (drawerEl) drawerEl.classList.remove("open"); closeOverlayIfIdle(); }
@@ -821,8 +795,8 @@ function createChatItem(chat) {
 function updateSendingState(value) {
   isSending = value;
   if (sendBtnEl) sendBtnEl.disabled = value;
-  if (modelQuickBtnEl) modelQuickBtnEl.disabled = value;
   if (userInputEl) userInputEl.disabled = value;
+  if (modelQuickBtnEl) modelQuickBtnEl.disabled = value;
 }
 function showLoadingIndicator(userMsgId) {
   if (!messagesSectionEl) return;
@@ -894,6 +868,7 @@ async function sendMessage(promptOverride = null) {
   const tempUserMsg = { role: "user", content: text, _id: tempUserMsgId };
   chat.messages.push(tempUserMsg);
   renderActiveChat();
+  if (userInputEl) { userInputEl.value = ""; autoResizeTextarea(); }
   try {
     const data = await apiRequest(`/api/conversations/${encodeURIComponent(chat.id)}/messages`, {
       method: "POST",
@@ -902,7 +877,6 @@ async function sendMessage(promptOverride = null) {
     const updatedConversation = data.conversation || data;
     upsertConversation(updatedConversation, false);
     activeChatId = String(updatedConversation.id || chat.id);
-    if (userInputEl) { userInputEl.value = ""; autoResizeTextarea(); }
     renderChatList();
     renderActiveChat();
   } catch (error) {
@@ -971,210 +945,12 @@ function handleOverlayClick() {
   closeModelQuickMenu();
   closeDrawer();
   closeProfileModal();
-  closeImageResultModal();
   closeDeleteConfirmModal();
 }
 async function saveProfile() {
   const profile = { name: profileNameEl ? profileNameEl.value.trim() : "", job: profileJobEl ? profileJobEl.value.trim() : "", systemPrompt: profileSystemPromptEl ? profileSystemPromptEl.value.trim() : "", responseStyle: profileResponseStyleEl ? profileResponseStyleEl.value.trim() : "" };
   const data = await apiRequest("/api/profile", { method: "PATCH", body: JSON.stringify(profile) });
   setProfile(data.profile || profile);
-}
-function hideChatModelPicker() {
-  closeModelMenu();
-  if (modelPickerBtnEl) {
-    modelPickerBtnEl.hidden = true;
-    modelPickerBtnEl.style.display = "none";
-  }
-  if (modelMenuEl) {
-    modelMenuEl.hidden = true;
-    modelMenuEl.style.display = "none";
-  }
-}
-function showChatModelPicker() {
-  if (modelPickerBtnEl) {
-    modelPickerBtnEl.hidden = false;
-    modelPickerBtnEl.style.display = "";
-  }
-  if (modelMenuEl) {
-    modelMenuEl.hidden = true;
-    modelMenuEl.style.display = "";
-  }
-}
-function switchMode(mode) {
-  currentMode = mode;
-  if (mode === "chat") {
-    chatMainEl.style.display = "flex";
-    chatMainEl.style.flexDirection = "column";
-    chatMainEl.style.height = "100%";
-    imageGenSectionEl.style.display = "none";
-    showChatModelPicker();
-    if (imageModeTitleEl) imageModeTitleEl.hidden = true;
-    setSelectedModel(selectedModelId);
-    chatComposerEl.style.display = "";
-    newChatBtnEl.textContent = "گفت‌وگوی جدید";
-    newChatBtnEl.onclick = () => { void handleNewChat(); };
-    if (profileBtnEl) profileBtnEl.style.display = "";
-    renderActiveChat();
-    scrollToBottom();
-  } else {
-    closeModelQuickMenu();
-    chatMainEl.style.display = "none";
-    imageGenSectionEl.style.display = "flex";
-    hideChatModelPicker();
-    if (imageModeTitleEl) {
-      imageModeTitleEl.textContent = "Z-Image Turbo";
-      imageModeTitleEl.hidden = false;
-    }
-    chatComposerEl.style.display = "none";
-    newChatBtnEl.textContent = "بازگشت";
-    newChatBtnEl.onclick = () => { switchMode("chat"); closeDrawer(); };
-    if (profileBtnEl) profileBtnEl.style.display = "none";
-    loadSavedImages();
-  }
-}
-async function loadSavedImages() {
-  try { const data = await apiRequest("/api/images"); savedImages = data.images || []; renderSavedImages(); } catch (error) { console.error(error); }
-}
-function renderSavedImages() {
-  if (!savedImagesGridEl) return;
-  savedImagesGridEl.innerHTML = "";
-  const validUrls = [];
-  savedImages.forEach(async (url) => {
-    try {
-      const response = await fetch(url, { method: 'HEAD' });
-      if (response.ok) {
-        validUrls.push(url);
-        const imgWrapper = document.createElement("div");
-        imgWrapper.className = "img-wrapper";
-        const img = document.createElement("img");
-        img.src = url;
-        const buttonsContainer = document.createElement("div");
-        buttonsContainer.className = "buttons-container";
-        const downloadBtn = document.createElement("button");
-        downloadBtn.className = "download-btn";
-        downloadBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
-        downloadBtn.title = "دانلود عکس";
-        downloadBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          try {
-            const response = await fetch(url);
-            const blob = await response.blob();
-            const blobUrl = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            link.href = blobUrl;
-            link.download = `gapino-image-${Date.now()}.png`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(blobUrl);
-          } catch (error) {
-            console.error("Download failed:", error);
-            alert("خطا در دانلود عکس");
-          }
-        });
-        const deleteBtn = document.createElement("button");
-        deleteBtn.className = "delete-btn";
-        deleteBtn.innerHTML = `✕`;
-        deleteBtn.title = "حذف عکس";
-        deleteBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          try {
-            await apiRequest(`/api/images/${encodeURIComponent(url)}`, { method: "DELETE" });
-            savedImages = savedImages.filter(item => item !== url);
-            renderSavedImages();
-          } catch (error) {
-            console.error("Failed to delete image:", error);
-            alert("خطا در حذف عکس");
-          }
-        });
-        buttonsContainer.appendChild(downloadBtn);
-        buttonsContainer.appendChild(deleteBtn);
-        imgWrapper.appendChild(img);
-        imgWrapper.appendChild(buttonsContainer);
-        savedImagesGridEl.appendChild(imgWrapper);
-      } else {
-        savedImages = savedImages.filter(item => item !== url);
-      }
-    } catch (error) {
-      savedImages = savedImages.filter(item => item !== url);
-    }
-  });
-}
-async function handleSaveImageResult() {
-  if (!pendingImageUrl) return;
-  try {
-    const response = await apiRequest("/api/images/save", {
-      method: "POST",
-      body: JSON.stringify({ url: pendingImageUrl })
-    });
-    const savedUrl = response.url;
-    if (savedUrl) {
-      savedImages.push(savedUrl);
-      renderSavedImages();
-    }
-    if (imageResultModalEl) imageResultModalEl.classList.remove("show");
-    closeOverlayIfIdle();
-    pendingImageUrl = null;
-    if (generatedImageEl) generatedImageEl.src = "";
-  } catch (error) {
-    console.error("Failed to save image:", error);
-    alert("خطا در ذخیره تصویر");
-  }
-}
-function handleDiscardImageResult() {
-  pendingImageUrl = null;
-  if (imageResultModalEl) imageResultModalEl.classList.remove("show");
-  closeOverlayIfIdle();
-  if (generatedImageEl) generatedImageEl.src = "";
-}
-function closeImageResultModal() {
-  pendingImageUrl = null;
-  if (imageResultModalEl) imageResultModalEl.classList.remove("show");
-  closeOverlayIfIdle();
-  if (generatedImageEl) generatedImageEl.src = "";
-}
-async function generateImage() {
-  const prompt = imagePromptInputEl ? imagePromptInputEl.value.trim() : "";
-  if (!prompt) return;
-  if (isSending) return;
-  isSending = true;
-  if (imageSendBtnEl) {
-    imageSendBtnEl.disabled = true;
-    imageSendBtnEl.innerHTML = `<div class="spinner"></div>`;
-    imageSendBtnEl.style.display = "flex";
-    imageSendBtnEl.style.alignItems = "center";
-    imageSendBtnEl.style.justifyContent = "center";
-  }
-  if (imagePromptInputEl) imagePromptInputEl.disabled = true;
-  try {
-    const response = await apiRequest("/api/images/generate", { method: "POST", body: JSON.stringify({ prompt }) });
-    const imageUrl = response.imageUrl;
-    if (!imageUrl) throw new Error("No image returned");
-    pendingImageUrl = imageUrl;
-    if (generatedImageEl) generatedImageEl.src = imageUrl;
-    if (imageResultModalEl) {
-      imageResultModalEl.classList.add("show");
-      openOverlay();
-    }
-    imagePromptInputEl.value = "";
-    autoResizeImageTextarea();
-  } catch (error) { console.error("Image generation failed:", error); alert("خطا در تولید تصویر: " + (error.message || "")); } finally {
-    isSending = false;
-    if (imageSendBtnEl) {
-      imageSendBtnEl.disabled = false;
-      imageSendBtnEl.innerHTML = `<svg viewBox="0 0 24 24" class="icon-send" aria-hidden="true"><path d="M12 19V5m0 0 6 6m-6-6-6 6" /></svg>`;
-      imageSendBtnEl.style.display = "";
-      imageSendBtnEl.style.alignItems = "";
-      imageSendBtnEl.style.justifyContent = "";
-    }
-    if (imagePromptInputEl) imagePromptInputEl.disabled = false;
-    if (imagePromptInputEl) imagePromptInputEl.focus();
-  }
-}
-function autoResizeImageTextarea() {
-  if (!imagePromptInputEl) return;
-  imagePromptInputEl.style.height = "auto";
-  imagePromptInputEl.style.height = `${imagePromptInputEl.scrollHeight}px`;
 }
 async function initializeState() {
   applyTheme("auto", false);
@@ -1195,6 +971,24 @@ async function initializeState() {
 }
 if (sendBtnEl) sendBtnEl.addEventListener("click", (event) => { event.preventDefault(); void sendMessage(); });
 if (modelQuickBtnEl) modelQuickBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleModelQuickMenu(); });
+if (modelQuickRangeEl) {
+  modelQuickRangeEl.addEventListener("input", () => {
+    const provider = getProviderForModel(selectedModelId);
+    const index = Math.min(provider.models.length - 1, Math.max(0, Number(modelQuickRangeEl.value) || 0));
+    modelQuickRangeEl.style.setProperty("--quick-progress", `${(index / Math.max(1, provider.models.length - 1)) * 100}%`);
+    modelQuickRangeEl.setAttribute("aria-valuetext", provider.models[index]?.label || "");
+  });
+  modelQuickRangeEl.addEventListener("change", () => {
+    const provider = getProviderForModel(selectedModelId);
+    const index = Math.min(provider.models.length - 1, Math.max(0, Number(modelQuickRangeEl.value) || 0));
+    const nextModelId = provider.models[index].id;
+    if (nextModelId === selectedModelId) return;
+    const previousModelId = selectedModelId;
+    setSelectedModel(nextModelId, true);
+    renderModelQuickMenu();
+    void syncSelectedModelToServer(nextModelId, previousModelId);
+  });
+}
 if (userInputEl) userInputEl.addEventListener("input", autoResizeTextarea);
 if (modelPickerBtnEl) modelPickerBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleModelMenu(); });
 if (menuBtnEl) menuBtnEl.addEventListener("click", openDrawer);
@@ -1210,15 +1004,6 @@ if (mediaQuery) {
   if (mediaQuery.addEventListener) mediaQuery.addEventListener("change", onThemeChange);
   else if (mediaQuery.addListener) mediaQuery.addListener(onThemeChange);
 }
-if (imageGenDrawerBtn) imageGenDrawerBtn.addEventListener("click", () => { switchMode("image"); closeDrawer(); });
-if (imageSendBtnEl) imageSendBtnEl.addEventListener("click", generateImage);
-if (imagePromptInputEl) {
-  imagePromptInputEl.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); generateImage(); } });
-  imagePromptInputEl.addEventListener("input", autoResizeImageTextarea);
-}
-if (closeImageResultBtnEl) closeImageResultBtnEl.addEventListener("click", closeImageResultModal);
-if (saveImageResultBtnEl) saveImageResultBtnEl.addEventListener("click", handleSaveImageResult);
-if (discardImageResultBtnEl) discardImageResultBtnEl.addEventListener("click", handleDiscardImageResult);
 document.addEventListener("click", (event) => {
   if (modelMenuEl && modelPickerBtnEl && !modelMenuEl.contains(event.target) && !modelPickerBtnEl.contains(event.target)) closeModelMenu();
   if (modelQuickMenuEl && modelQuickBtnEl && !modelQuickMenuEl.contains(event.target) && !modelQuickBtnEl.contains(event.target)) closeModelQuickMenu();

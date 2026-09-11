@@ -1,0 +1,12 @@
+{
+  "name": "Gapino - AI Chat",
+  "short_name": "Gapino",
+  "description": "A fast, friendly AI chat application.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1c1c1e",
+  "theme_color": "#1c1c1e",
+  "lang": "fa",
+  "dir": "rtl"
+}

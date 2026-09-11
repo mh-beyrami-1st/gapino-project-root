@@ -1,9 +1,11 @@
 gapino-project-root/
+├── .example.env
 ├── .env
+├── .gitignore
+├── requirements.txt
 ├── backend/
 │   ├── data/
-│   │   ├── history.json
-│   │   └── images/(Automatic insert)
+│   │   └── database.db
 │   └── server.py
 └── frontend/
     ├── fonts/
@@ -13,4 +15,5 @@ gapino-project-root/
     ├── app.js
     ├── debug.js
     ├── index.html
+    ├── manifest.json
     └── style.css

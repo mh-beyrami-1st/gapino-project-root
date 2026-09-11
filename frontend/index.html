@@ -2,15 +2,19 @@
 <html lang="fa" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Gapino" />
+  <link rel="manifest" href="/manifest.json" />
   <meta name="color-scheme" content="light dark" />
   <title>Gapino - AI Chat</title>
-  <script src="debug.js" defer></script>
-  <link rel="stylesheet" href="style.css" />
+  <script src="/debug.js" defer></script>
+  <link rel="stylesheet" href="/style.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
-  <script defer src="app.js"></script>
+  <script defer src="/app.js"></script>
 </head>
 <body>
   <div id="app" class="app">
@@ -40,16 +44,6 @@
         <button type="button" id="newChatBtn" class="primary-btn">گفت‌وگوی جدید</button>
       </header>
       <section class="drawer-section">
-        <div class="chat-list" style="margin-bottom: 12px;">
-          <button id="imageGenDrawerBtn" class="chat-item image-gen-drawer-btn" style="width: 100%; border: none; cursor: pointer; text-align: right; padding: 0; background: var(--chat-item-bg);">
-            <div style="display: flex; align-items: center; gap: 10px; padding: 8px 12px; width: 100%;">
-              <svg viewBox="0 0 24 24" style="width: 20px; height: 20px; fill: currentColor; flex-shrink: 0;">
-                <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
-              </svg>
-              <span>تولید تصویر</span>
-            </div>
-          </button>
-        </div>
         <h2 class="drawer-subtitle">گفت‌وگوها</h2>
         <ul id="chatList" class="chat-list"></ul>
       </section>
@@ -66,7 +60,6 @@
           <path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </button>
-      <div id="imageModeTitle" class="topbar-title image-mode-title" hidden>Z-Image Turbo</div>
       <div id="modelMenu" class="model-menu" role="listbox" aria-label="مدل‌های گفتگو" hidden></div>
       <button type="button" id="profileBtn" class="icon-btn" aria-label="پروفایل و تنظیمات">
         <svg viewBox="0 0 24 24" class="icon-user" aria-hidden="true">
@@ -113,29 +106,17 @@
       </section>
       <section id="messagesSection" class="messages" aria-label="گفت‌وگو"></section>
     </main>
-    <section id="imageGenSection" class="image-gen-section" style="display: none; flex-direction: column; background: var(--app-bg-color);">
-      <div class="image-gen-input-wrapper">
-        <div class="image-gen-input-box">
-          <textarea id="imagePromptInput" class="composer-input" rows="1" placeholder=" " aria-label="نوشتن پرامپت تصویر" style="flex: 1; min-height: 24px; max-height: 80px;"></textarea>
-          <div class="composer-watermark" id="imagePromptWatermark">چه تصویری می‌خوای بسازی؟</div>
-          <button type="button" id="imageSendBtn" class="send-btn" aria-label="ارسال پرامپت">
-          <svg viewBox="0 0 24 24" class="icon-send" aria-hidden="true">
-              <path d="M12 19V5m0 0 6 6m-6-6-6 6" />
-            </svg>
-          </button>
-        </div>
-      </div>
-      <div class="image-gen-grid-wrapper">
-        <h3 class="image-gen-grid-title">تصاویر من</h3>
-        <div id="savedImagesGrid" class="image-gen-grid"></div>
-      </div>
-    </section>
     <footer class="composer" id="chatComposer">
       <div class="composer-inner">
         <textarea id="userInput" class="composer-input" rows="1" aria-label="نوشتن پیام" placeholder=" "></textarea>
         <div class="composer-watermark" id="composerWatermark">پیام خود را بنویسید...</div>
-        <div id="modelQuickMenu" class="model-quick-menu" role="listbox" aria-label="انتخاب مدل دقیق" hidden></div>
-        <button type="button" id="modelQuickBtn" class="model-more-btn" aria-label="انتخاب مدل دقیق" aria-haspopup="listbox" aria-expanded="false">
+        <div id="modelQuickMenu" class="model-quick-menu" role="dialog" aria-label="تنظیم سرعت و دقت مدل" hidden>
+          <div class="model-slider-track">
+            <input id="modelQuickRange" class="model-quick-range" type="range" min="0" max="2" step="1" value="0" aria-label="سطح دقت مدل">
+          </div>
+          <div class="model-slider-labels"><span>سریع‌تر</span><span>دقیق‌تر</span></div>
+        </div>
+        <button type="button" id="modelQuickBtn" class="model-more-btn" aria-label="تنظیم سرعت و دقت مدل" aria-haspopup="dialog" aria-expanded="false">
           <svg viewBox="0 0 24 24" class="icon-more" aria-hidden="true">
             <circle cx="5" cy="12" r="1.7"></circle>
             <circle cx="12" cy="12" r="1.7"></circle>
@@ -149,28 +130,6 @@
         </button>
       </div>
     </footer>
-    <div id="imageResultModal" class="modal" aria-hidden="true">
-      <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="imageResultTitle">
-        <div class="modal-header">
-          <h2 id="imageResultTitle">تصویر تولید شده</h2>
-          <button type="button" id="closeImageResultBtn" class="icon-btn" aria-label="بستن پنجره">
-            <svg viewBox="0 0 24 24" class="icon-close" aria-hidden="true">
-              <path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-        </div>
-        <div class="modal-body" style="text-align: center; padding: 20px;">
-          <div id="imageResultContainer" style="margin-bottom: 20px;">
-            <img id="generatedImage" src="" alt="تصویر تولید شده" style="width: 100%; max-width: 400px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);" />
-          </div>
-          <p style="margin-bottom: 16px; color: var(--text-color);">آیا می‌خوای این عکس رو ذخیره کنی؟</p>
-          <div style="display: flex; gap: 12px; justify-content: center;">
-            <button type="button" id="saveImageResultBtn" class="primary-btn">ذخیره</button>
-            <button type="button" id="discardImageResultBtn" class="primary-btn" style="background: #c94b4b;">حذف</button>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </body>
 </html>

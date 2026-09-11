@@ -1,10 +1,11 @@
 import json
 import os
+import sqlite3
 import tempfile
 import time
-import hashlib
+from contextlib import contextmanager
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory
@@ -13,22 +14,19 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 FRONTEND_DIR = BASE_DIR / "frontend"
-STORE_PATH = BASE_DIR / "backend" / "data" / "history.json"
-IMAGES_DIR = BASE_DIR / "backend" / "data" / "images"
-STORE_LOCK = Lock()
-ENV_LOCK = Lock()
-IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+DATABASE_PATH = BASE_DIR / "backend" / "data" / "database.db"
+DATABASE_LOCK = RLock()
+ENV_LOCK = RLock()
 
-app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
+# Static files are served explicitly below so unknown client-side routes can
+# fall back to index.html (useful for PWA navigation and browser refreshes).
+app = Flask(__name__, static_folder=None)
 
-PORT = int(os.getenv("PORT", "3000"))
-HOST = os.getenv("HOST", "localhost")
+PORT = int(os.getenv("PORT", 3000))
+HOST = "0.0.0.0"
 GAPGPT_API_KEY = os.getenv("GAPGPT_API_KEY")
 GAPGPT_API_URL = os.getenv("GAPGPT_API_URL")
 CHAT_MODEL = os.getenv("CHAT_MODEL")
-IMAGE_API_URL = os.getenv("IMAGE_API_URL")
-IMAGE_MODEL = os.getenv("IMAGE_MODEL")
-IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1024x1024")
 ENV_PATH = BASE_DIR / ".env"
 PROMPT_MODEL = "gemini-2.5-flash-lite"
 SUPPORTED_CHAT_MODELS = frozenset(
@@ -48,10 +46,56 @@ if not GAPGPT_API_URL:
     raise RuntimeError("Missing GAPGPT_API_URL in .env")
 if not CHAT_MODEL:
     raise RuntimeError("Missing CHAT_MODEL in .env")
-if not IMAGE_API_URL:
-    raise RuntimeError("Missing IMAGE_API_URL in .env")
-if not IMAGE_MODEL:
-    raise RuntimeError("Missing IMAGE_MODEL in .env")
+
+
+@contextmanager
+def database_connection():
+    """Yield a configured SQLite connection and always close it afterwards."""
+    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(
+        DATABASE_PATH,
+        timeout=30,
+        check_same_thread=False,
+    )
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute("PRAGMA busy_timeout = 30000")
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
+def initialize_database():
+    with database_connection() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS conversations (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+                content TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_messages_session_timestamp
+                ON messages(session_id, timestamp, id);
+            CREATE TABLE IF NOT EXISTS app_state (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            """
+        )
+        connection.commit()
+
+
+initialize_database()
 
 DEFAULT_PROFILE = {"name": "", "job": "", "systemPrompt": "", "responseStyle": ""}
 DEFAULT_THEME = "auto"
@@ -116,7 +160,6 @@ def default_state():
         "theme": DEFAULT_THEME,
         "activeConversationId": DEFAULT_ACTIVE_CONVERSATION_ID,
         "conversations": [],
-        "savedImages": [],
     }
 
 def normalize_message(message):
@@ -197,66 +240,107 @@ def normalize_state(state):
     valid_ids = {conversation["id"] for conversation in normalized_conversations}
     if active_id not in valid_ids:
         active_id = normalized_conversations[0]["id"] if normalized_conversations else None
-    saved_images = state.get("savedImages")
-    if not isinstance(saved_images, list):
-        saved_images = []
-    saved_images = [str(img) for img in saved_images if img]
     return {
         "version": 2,
         "profile": normalized_profile,
         "theme": theme,
         "activeConversationId": active_id,
         "conversations": normalized_conversations,
-        "savedImages": saved_images,
     }
 
-def migrate_legacy_store(data):
-    if not isinstance(data, dict):
-        return default_state()
-    users = data.get("users")
-    if isinstance(users, dict) and users:
-        legacy_state = users.get("local")
-        if not isinstance(legacy_state, dict):
-            legacy_state = next((value for value in users.values() if isinstance(value, dict)), None)
-        if isinstance(legacy_state, dict):
-            return normalize_state(legacy_state)
-    return normalize_state(data)
-
 def _load_store_unlocked():
-    if not STORE_PATH.exists():
-        return default_state()
+    """Read the application state from SQLite into the API's state shape."""
+    with database_connection() as connection:
+        conversations = []
+        conversation_rows = connection.execute(
+            "SELECT id, title, created_at, updated_at FROM conversations "
+            "ORDER BY updated_at DESC, created_at DESC"
+        ).fetchall()
+        message_rows = connection.execute(
+            "SELECT session_id, role, content FROM messages ORDER BY timestamp ASC, id ASC"
+        ).fetchall()
+        messages_by_session = {}
+        for row in message_rows:
+            messages_by_session.setdefault(row["session_id"], []).append(
+                {"role": row["role"], "content": row["content"]}
+            )
+        for row in conversation_rows:
+            conversations.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "messages": messages_by_session.get(row["id"], []),
+                    "createdAt": row["created_at"],
+                    "updatedAt": row["updated_at"],
+                }
+            )
+        state_values = {
+            row["key"]: row["value"]
+            for row in connection.execute("SELECT key, value FROM app_state").fetchall()
+        }
+    state = default_state()
     try:
-        with STORE_PATH.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return default_state()
-    return migrate_legacy_store(data)
+        state["profile"] = json.loads(state_values.get("profile", "{}"))
+    except json.JSONDecodeError:
+        state["profile"] = {}
+    state["theme"] = state_values.get("theme", DEFAULT_THEME)
+    state["activeConversationId"] = state_values.get("activeConversationId")
+    state["conversations"] = conversations
+    return normalize_state(state)
+
 
 def _save_store_unlocked(state):
-    STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    """Persist a complete normalized state atomically in one SQLite transaction."""
     normalized = normalize_state(state)
-    fd, tmp_name = tempfile.mkstemp(prefix="history.", suffix=".tmp", dir=str(STORE_PATH.parent), text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(normalized, handle, ensure_ascii=False, indent=2)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, STORE_PATH)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    with database_connection() as connection:
+        with connection:
+            connection.execute("DELETE FROM messages")
+            connection.execute("DELETE FROM conversations")
+            connection.executemany(
+                "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                [
+                    (
+                        conversation["id"],
+                        conversation["title"],
+                        conversation["createdAt"],
+                        conversation["updatedAt"],
+                    )
+                    for conversation in normalized["conversations"]
+                ],
+            )
+            connection.executemany(
+                "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+                [
+                    (
+                        conversation["id"],
+                        message["role"],
+                        message["content"],
+                        conversation["createdAt"] + index,
+                    )
+                    for conversation in normalized["conversations"]
+                    for index, message in enumerate(conversation["messages"])
+                ],
+            )
+            state_values = {
+                "profile": json.dumps(normalized["profile"], ensure_ascii=False),
+                "theme": normalized["theme"],
+                "activeConversationId": normalized["activeConversationId"] or "",
+            }
+            connection.executemany(
+                "INSERT INTO app_state (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                state_values.items(),
+            )
     return normalized
 
+
 def load_store():
-    with STORE_LOCK:
-        state = _load_store_unlocked()
-        return _save_store_unlocked(state)
+    with DATABASE_LOCK:
+        return _load_store_unlocked()
+
 
 def update_store(mutator):
-    with STORE_LOCK:
+    with DATABASE_LOCK:
         state = _load_store_unlocked()
         result = mutator(state)
         state = _save_store_unlocked(state)
@@ -390,16 +474,19 @@ def generate_conversation_title(user_content):
     except Exception:
         return user_content[:30].strip()
 
-def get_saved_images_from_disk():
-    images = []
-    if IMAGES_DIR.exists():
-        for file_path in IMAGES_DIR.iterdir():
-            if file_path.is_file() and file_path.suffix.lower() in {'.png', '.jpg', '.jpeg', '.gif', '.webp'}:
-                images.append(f"/api/images/static/{file_path.name}")
-    return sorted(images)
-
 @app.get("/")
 def root():
+    return send_from_directory(FRONTEND_DIR, "index.html")
+
+
+@app.get("/<path:frontend_path>")
+def frontend_files(frontend_path):
+    """Serve frontend assets and fall back to index.html for client-side routes."""
+    if frontend_path == "api" or frontend_path.startswith("api/"):
+        return json_error("Not found", 404)
+    requested_file = FRONTEND_DIR / frontend_path
+    if requested_file.is_file():
+        return send_from_directory(FRONTEND_DIR, frontend_path)
     return send_from_directory(FRONTEND_DIR, "index.html")
 
 @app.get("/api/auth/me")
@@ -727,114 +814,6 @@ def chat_legacy():
         return jsonify(data), response.status_code
     except requests.RequestException as exc:
         return jsonify({"error": "Upstream request failed", "details": str(exc)}), 502
-
-@app.get("/api/images")
-def get_saved_images():
-    images = get_saved_images_from_disk()
-    return jsonify({"images": images})
-
-@app.post("/api/images/save")
-def save_image():
-    if not request.is_json:
-        return json_error("Request must be JSON", 415)
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return json_error("Invalid JSON body", 400)
-    image_url = str(payload.get("url") or "").strip()
-    if not image_url:
-        return json_error("url is required", 400)
-    try:
-        response = requests.get(image_url, timeout=30)
-        if response.status_code != 200:
-            return json_error("Failed to download image from URL", 502)
-        content_hash = hashlib.md5(response.content).hexdigest()
-        timestamp = now_ts()
-        filename = f"{timestamp}_{content_hash}_{os.urandom(4).hex()}.png"
-        filepath = IMAGES_DIR / filename
-        with open(filepath, "wb") as f:
-            f.write(response.content)
-        saved_url = f"/api/images/static/{filename}"
-        return jsonify({"ok": True, "url": saved_url})
-    except requests.RequestException as exc:
-        return json_error(f"Failed to download image: {str(exc)}", 502)
-
-@app.delete("/api/images/<path:image_url>")
-def delete_image(image_url):
-    filename = image_url.split("/")[-1]
-    filepath = IMAGES_DIR / filename
-    try:
-        if filepath.exists():
-            filepath.unlink()
-    except OSError:
-        pass
-    return jsonify({"ok": True})
-
-@app.get("/api/images/static/<path:filename>")
-def serve_image(filename):
-    return send_from_directory(str(IMAGES_DIR), filename)
-
-@app.post("/api/images/generate")
-def generate_image():
-    if not request.is_json:
-        return json_error("Request must be JSON", 415)
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return json_error("Invalid JSON body", 400)
-    user_prompt = str(payload.get("prompt") or "").strip()
-    if not user_prompt:
-        return json_error("prompt is required", 400)
-    enhanced_prompt = user_prompt
-    try:
-        chat_response = requests.post(
-            GAPGPT_API_URL,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {GAPGPT_API_KEY}"},
-            json={
-                "model": PROMPT_MODEL,
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are an expert prompt engineer for AI image generation. Your task is to take a simple user description and expand it into a detailed, creative, and visually rich image prompt in Persian. The output should be only the prompt, no extra text. Keep it under 100 words. Focus on style, lighting, composition, and atmosphere."
-                    },
-                    {"role": "user", "content": f"Create a detailed image prompt based on this: {user_prompt}"}
-                ],
-            },
-            timeout=30,
-        )
-        if chat_response.status_code == 200:
-            chat_data = chat_response.json()
-            choices = chat_data.get("choices", [])
-            if choices and choices[0].get("message"):
-                enhanced_prompt = choices[0]["message"]["content"].strip()
-                if not enhanced_prompt:
-                    enhanced_prompt = user_prompt
-        else:
-            enhanced_prompt = user_prompt
-    except Exception:
-        enhanced_prompt = user_prompt
-    try:
-        response = requests.post(
-            IMAGE_API_URL,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {GAPGPT_API_KEY}"},
-            json={
-                "model": IMAGE_MODEL,
-                "prompt": enhanced_prompt,
-                "size": IMAGE_SIZE
-            },
-            timeout=60,
-        )
-        if response.status_code != 200:
-            try:
-                error_data = response.json()
-            except:
-                error_data = {"raw": response.text}
-            return json_error(f"Image generation failed: {error_data}", status=response.status_code)
-        data = response.json()
-        image_url = data.get("data", [{}])[0].get("url")
-        if not image_url:
-            return json_error("No image URL returned from API", 502)
-        return jsonify({"imageUrl": image_url, "enhancedPrompt": enhanced_prompt, "userPrompt": user_prompt})
-    except requests.RequestException as exc:
-        return json_error(f"Image generation request failed: {str(exc)}", 502)
 
 @app.errorhandler(404)
 def not_found(_error):
