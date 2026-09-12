@@ -3,7 +3,6 @@ import json
 import os
 import secrets
 import sqlite3
-import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -26,7 +25,6 @@ elif os.getenv("VERCEL"):
 else:
     DATABASE_PATH = BASE_DIR / "backend" / "data" / "database.db"
 DATABASE_LOCK = RLock()
-ENV_LOCK = RLock()
 
 # Static files are served explicitly below so unknown client-side routes can
 # fall back to index.html (useful for PWA navigation and browser refreshes).
@@ -36,9 +34,7 @@ PORT = int(os.getenv("PORT", 3000))
 HOST = "0.0.0.0"
 GAPGPT_API_KEY = os.getenv("GAPGPT_API_KEY")
 GAPGPT_API_URL = os.getenv("GAPGPT_API_URL")
-CHAT_MODEL = os.getenv("CHAT_MODEL")
 APP_PIN = os.getenv("APP_PIN", "")
-ENV_PATH = BASE_DIR / ".env"
 PROMPT_MODEL = "gemini-2.5-flash-lite"
 SESSION_TTL = 60 * 60 * 24 * 30  # 30 days
 SESSION_COOKIE_NAME = "gapino_session"
@@ -57,8 +53,6 @@ if not GAPGPT_API_KEY:
     raise RuntimeError("Missing GAPGPT_API_KEY in .env")
 if not GAPGPT_API_URL:
     raise RuntimeError("Missing GAPGPT_API_URL in .env")
-if not CHAT_MODEL:
-    raise RuntimeError("Missing CHAT_MODEL in .env")
 if not APP_PIN:
     raise RuntimeError("Missing APP_PIN in .env")
 
@@ -185,54 +179,6 @@ def revoke_session(token: str) -> None:
 
 def get_session_token() -> str:
     return request.cookies.get(SESSION_COOKIE_NAME, "")
-
-
-# ---------------------------------------------------------------------------
-# Model persistence
-# ---------------------------------------------------------------------------
-
-def persist_chat_model(model):
-    """Update the running chat model and persist it in the project .env file."""
-    model = str(model or "").strip()
-    if model not in SUPPORTED_CHAT_MODELS:
-        raise ValueError("Invalid model")
-    global CHAT_MODEL
-    with ENV_LOCK:
-        try:
-            env_text = ENV_PATH.read_text(encoding="utf-8") if ENV_PATH.exists() else ""
-            lines = env_text.splitlines(keepends=True)
-            replaced = False
-            updated_lines = []
-            for line in lines:
-                key, separator, _value = line.partition("=")
-                if separator and key.strip() == "CHAT_MODEL" and not key.lstrip().startswith("#"):
-                    line_ending = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
-                    updated_lines.append(f"CHAT_MODEL={model}{line_ending}")
-                    replaced = True
-                else:
-                    updated_lines.append(line)
-            if not replaced:
-                if updated_lines and not updated_lines[-1].endswith(("\n", "\r")):
-                    updated_lines[-1] += "\n"
-                updated_lines.append(f"CHAT_MODEL={model}\n")
-            fd, temp_name = tempfile.mkstemp(prefix=".env.", suffix=".tmp", dir=str(ENV_PATH.parent), text=True)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-                    handle.write("".join(updated_lines))
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(temp_name, ENV_PATH)
-            except Exception:
-                try:
-                    os.unlink(temp_name)
-                except OSError:
-                    pass
-                raise
-        except OSError:
-            raise
-        CHAT_MODEL = model
-        os.environ["CHAT_MODEL"] = model
-    return CHAT_MODEL
 
 
 # ---------------------------------------------------------------------------
@@ -507,8 +453,8 @@ def build_system_prompt(profile):
     return "\n".join(parts)
 
 
-def request_upstream_chat(messages, model=None):
-    payload = {"model": model or CHAT_MODEL, "messages": messages}
+def request_upstream_chat(messages, model):
+    payload = {"model": model, "messages": messages}
     response = requests.post(
         GAPGPT_API_URL,
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {GAPGPT_API_KEY}"},
@@ -658,7 +604,7 @@ def frontend_files(frontend_path):
 
 
 # ---------------------------------------------------------------------------
-# State / model endpoints
+# State endpoints
 # ---------------------------------------------------------------------------
 
 @app.get("/api/state")
@@ -670,37 +616,9 @@ def get_state():
             "theme": state["theme"],
             "activeConversationId": state["activeConversationId"],
             "conversations": [conversation_summary(conversation) for conversation in state["conversations"]],
-            "chatModel": CHAT_MODEL,
             "promptModel": PROMPT_MODEL,
         }
     )
-
-
-@app.get("/api/model")
-def get_model():
-    return jsonify({"chatModel": CHAT_MODEL, "promptModel": PROMPT_MODEL})
-
-
-@app.patch("/api/model")
-def patch_model():
-    if not request.is_json:
-        return json_error("Request must be JSON", 415)
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return json_error("Invalid JSON body", 400)
-    model = str(payload.get("model") or "").strip()
-    if model not in SUPPORTED_CHAT_MODELS:
-        return json_error(
-            "Invalid model",
-            400,
-            availableModels=sorted(SUPPORTED_CHAT_MODELS),
-        )
-    try:
-        selected_model = persist_chat_model(model)
-    except OSError:
-        return json_error("Failed to persist model configuration", 500)
-    return jsonify({"chatModel": selected_model, "promptModel": PROMPT_MODEL})
-
 
 @app.patch("/api/state")
 def patch_state():
@@ -746,7 +664,6 @@ def patch_state():
             "profile": state["profile"],
             "theme": state["theme"],
             "activeConversationId": state["activeConversationId"],
-            "chatModel": CHAT_MODEL,
             "promptModel": PROMPT_MODEL,
         }
     )
@@ -911,7 +828,9 @@ def post_message(conversation_id):
     content = str(payload.get("content") or "").strip()
     if not content:
         return json_error("content is required", 400)
-    model = str(payload.get("model") or CHAT_MODEL).strip()
+    model = str(payload.get("model") or "").strip()
+    if model not in SUPPORTED_CHAT_MODELS:
+        return json_error("Invalid model", 400, availableModels=sorted(SUPPORTED_CHAT_MODELS))
     conversation_missing = False
     upstream_messages = None
 
@@ -1013,8 +932,10 @@ def chat_legacy():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return json_error("Invalid JSON body", 400)
-    if not payload.get("model"):
-        payload["model"] = CHAT_MODEL
+    model = str(payload.get("model") or "").strip()
+    if model not in SUPPORTED_CHAT_MODELS:
+        return json_error("Invalid model", 400, availableModels=sorted(SUPPORTED_CHAT_MODELS))
+    payload["model"] = model
     try:
         response = requests.post(
             GAPGPT_API_URL,

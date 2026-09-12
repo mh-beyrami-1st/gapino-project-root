@@ -87,22 +87,6 @@ function getProviderForModel(modelId) {
 function persistSelectedModel() {
   try { localStorage.setItem(MODEL_STORAGE_KEY, selectedModelId); } catch { /* localStorage may be unavailable */ }
 }
-async function syncSelectedModelToServer(modelId, previousModelId = selectedModelId) {
-  try {
-    const state = await apiRequest("/api/model", {
-      method: "PATCH",
-      body: JSON.stringify({ model: modelId }),
-    });
-    if (state && state.chatModel) {
-      setSelectedModel(state.chatModel, true);
-      renderModelQuickMenu();
-    }
-  } catch (error) {
-    setSelectedModel(previousModelId, true);
-    renderModelQuickMenu();
-    console.error("Model update failed:", error);
-  }
-}
 function setSelectedModel(modelId, persist = false) {
   const option = MODEL_OPTIONS.find((item) => item.id === modelId) || MODEL_OPTIONS.find((item) => item.id === DEFAULT_MODEL_ID);
   const provider = getProviderForModel(option.id);
@@ -193,14 +177,12 @@ function renderModelMenu() {
     button.appendChild(modelCount);
     button.appendChild(check);
     button.addEventListener("click", () => {
-      const previousModelId = selectedModelId;
       const currentProvider = getProviderForModel(selectedModelId);
       const nextModelId = currentProvider.id === provider.id
         ? selectedModelId
         : provider.models[0].id;
       setSelectedModel(nextModelId, true);
       renderModelQuickMenu();
-      void syncSelectedModelToServer(nextModelId, previousModelId);
       closeModelMenu();
     });
     modelMenuEl.appendChild(button);
@@ -974,10 +956,6 @@ async function initializeState() {
   appInitialized = true;
   applyTheme("auto", false);
   const state = await apiRequest("/api/state");
-  if (state.chatModel && MODEL_OPTIONS.some((option) => option.id === state.chatModel)) {
-    setSelectedModel(state.chatModel, true);
-    renderModelQuickMenu();
-  }
   setProfile(state.profile || {});
   applyTheme(state.theme || "auto", false);
   chats = Array.isArray(state.conversations) ? state.conversations.map(normalizeConversationSummary).filter(Boolean) : [];
@@ -1061,10 +1039,8 @@ if (modelQuickRangeEl) {
     const index = Math.min(provider.models.length - 1, Math.max(0, Number(modelQuickRangeEl.value) || 0));
     const nextModelId = provider.models[index].id;
     if (nextModelId === selectedModelId) return;
-    const previousModelId = selectedModelId;
     setSelectedModel(nextModelId, true);
     renderModelQuickMenu();
-    void syncSelectedModelToServer(nextModelId, previousModelId);
   });
 }
 if (userInputEl) userInputEl.addEventListener("input", autoResizeTextarea);
