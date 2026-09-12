@@ -1195,9 +1195,9 @@ button:disabled {
   box-sizing: border-box;
   display: block;
   padding: 17px 16px 12px;
-  border: 1px solid rgba(255,255,255,.08);
+  border: 1px solid var(--composer-border);
   border-radius: 18px;
-  background: #303032;
+  background: var(--modal-content-bg);
   box-shadow: 0 14px 34px rgba(0,0,0,.32);
   direction: rtl;
 }
@@ -1211,7 +1211,7 @@ button:disabled {
 .model-quick-range::-moz-range-progress { height: 10px; border-radius: 99px; background: #168bea; }
 .model-quick-range::-webkit-slider-thumb { appearance: none; width: 36px; height: 36px; margin-top: -13px; border-radius: 50%; background: #f5f5f5; border: 1px solid #ddd; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
 .model-quick-range::-moz-range-thumb { width: 36px; height: 36px; border-radius: 50%; background: #f5f5f5; border: 1px solid #ddd; }
-.model-slider-labels { display:flex; justify-content:space-between; direction:ltr; color:#c8c8ca; font-size:12px; margin-top:5px; padding:0 1px; }
+.model-slider-labels { display:flex; justify-content:space-between; direction:ltr; color:var(--drawer-subtitle-color); font-size:12px; margin-top:5px; padding:0 1px; }
 
 /* ----------------------------------------------------------------------- */
 /* PIN gate                                                                 */
