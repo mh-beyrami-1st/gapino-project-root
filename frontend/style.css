@@ -927,46 +927,27 @@ button:disabled {
   width: 100%;
   max-width: var(--app-max-width);
   margin: 0 auto;
-  padding: 12px clamp(16px, 4vw, 56px) calc(16px + env(safe-area-inset-bottom));
-  background: transparent;
+  padding: 12px clamp(16px, 4vw, 56px) max(12px, env(safe-area-inset-bottom));
+  background: var(--composer-bg);
   z-index: 18;
 }
-/* gradient only above the input; not behind the bottom safe-area strip */
+
+/* fade نرم فقط بالای composer (از رنگ composer به transparent) */
 .composer::before {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
-  top: 0;
-  bottom: calc(16px + env(safe-area-inset-bottom) - 24px);
-  background: linear-gradient(to top, var(--composer-gradient-start) 60%, var(--composer-gradient-end));
+  top: -28px;
+  height: 28px;
+  background: linear-gradient(to top, var(--composer-bg), transparent);
   pointer-events: none;
-  z-index: -1;
 }
-/* solid fill for the bottom safe-area strip so iOS shows no seam */
-.composer::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: calc(16px + env(safe-area-inset-bottom));
-  background: var(--bg-color);
-  pointer-events: none;
-  z-index: -1;
-}
+
 :root.standalone .composer {
   position: fixed;
-  /* iOS can report a shorter dynamic viewport for installed PWAs. Keep the
-     chat layout on that viewport, but move only the composer to its real end. */
-  bottom: calc(100dvh - 100lvh + env(safe-area-inset-bottom));
-  padding-bottom: 16px;
-}
-:root.standalone .composer::before {
-  bottom: -8px;
-}
-:root.standalone .composer::after {
-  height: 16px;
+  bottom: 0;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
 }
 
 /* image preview */
