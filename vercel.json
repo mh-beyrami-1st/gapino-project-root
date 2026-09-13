@@ -15,6 +15,10 @@
       "dest": "backend/server.py"
     },
     {
+      "src": "/chat(?:/(.*))?",
+      "dest": "backend/server.py"
+    },
+    {
       "src": "/fonts/(.*)",
       "dest": "frontend/fonts/$1"
     },

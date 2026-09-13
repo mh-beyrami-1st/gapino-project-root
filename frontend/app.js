@@ -1,36 +1,50 @@
 const DEFAULT_PROFILE = { name: "", job: "", systemPrompt: "", responseStyle: "" };
-const DEFAULT_MODEL_ID = "gpt-5.4-nano";
+const DEFAULT_MODEL_ID = "gpt-5.6-sol";
 const MODEL_STORAGE_KEY = "gapino.selectedModel";
 const MODEL_PROVIDERS = [
   {
     id: "gpt",
-    label: "GPT 5.4",
+    label: "GPT",
     subtitle: "OpenAI",
     models: [
-      { id: "gpt-5.4-nano", label: "GPT 5.4 Nano", strength: "ضعیف", tone: "weak" },
-      { id: "gpt-5.4-mini", label: "GPT 5.4 Mini", strength: "متوسط", tone: "medium" },
-      { id: "gpt-5.4", label: "GPT 5.4", strength: "قوی", tone: "strong" },
+      { id: "gpt-5.6-luna", label: "Luna", strength: "سریع", tone: "weak" },
+      { id: "gpt-5.6-terra", label: "Terra", strength: "متوسط", tone: "medium" },
+      { id: "gpt-5.6-sol", label: "Sol", strength: "دقیق", tone: "strong", acceptsImages: true },
     ],
   },
   {
     id: "gemini",
-    label: "Gemini 2.5",
+    label: "Gemini",
     subtitle: "Google",
     models: [
-      { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite", strength: "متوسط", tone: "medium" },
-      { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", strength: "قوی", tone: "strong" },
-      { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro", strength: "قوی", tone: "strong" },
+      { id: "gemini-3.1-flash-lite", label: "Flash Lite", strength: "سریع", tone: "weak" },
+      { id: "gemini-3.6-flash", label: "Flash", strength: "متوسط", tone: "medium" },
+      { id: "gemini-3.1-pro-preview", label: "Pro", strength: "دقیق", tone: "strong" },
     ],
   },
 ];
 const MODEL_OPTIONS = MODEL_PROVIDERS.flatMap((provider) => provider.models);
 const THEME_MODES = ["auto", "light", "dark"];
 
+function getModelDisplayName(modelId) {
+  const names = {
+    "gpt-5.6-sol": "GPT 5.6 Sol",
+    "gpt-5.6-terra": "GPT 5.6 Terra",
+    "gpt-5.6-luna": "GPT 5.6 Luna",
+    "gemini-3.1-pro-preview": "Gemini 3.1 Pro",
+    "gemini-3.6-flash": "Gemini 3.6 Flash",
+    "gemini-3.1-flash-lite": "Gemini 3.1 Flash Lite",
+  };
+  return names[modelId] || "GPT 5.6 Sol";
+}
+
 const pinGateEl = document.getElementById("pinGate");
 const pinFormEl = document.getElementById("pinForm");
-const pinInputEl = document.getElementById("pinInput");
+const usernameInputEl = document.getElementById("usernameInput");
+const passwordInputEl = document.getElementById("passwordInput");
 const pinErrorEl = document.getElementById("pinError");
 const appEl = document.getElementById("app");
+const appToastEl = document.getElementById("appToast");
 
 const emptyStateEl = document.getElementById("emptyState");
 const messagesSectionEl = document.getElementById("messagesSection");
@@ -45,6 +59,8 @@ const closeDrawerBtnEl = document.getElementById("closeDrawerBtn");
 const newChatBtnEl = document.getElementById("newChatBtn");
 const chatListEl = document.getElementById("chatList");
 const profileBtnEl = document.getElementById("profileBtn");
+const topbarNewChatBtnEl = document.getElementById("topbarNewChatBtn");
+const logoutBtnEl = document.getElementById("logoutBtn");
 const profileModalEl = document.getElementById("profileModal");
 const closeProfileBtnEl = document.getElementById("closeProfileBtn");
 const profileResponseStyleEl = document.getElementById("profileResponseStyle");
@@ -58,6 +74,14 @@ const modelMenuEl = document.getElementById("modelMenu");
 const modelQuickBtnEl = document.getElementById("modelQuickBtn");
 const modelQuickMenuEl = document.getElementById("modelQuickMenu");
 const modelQuickRangeEl = document.getElementById("modelQuickRange");
+const modelSliderLabelsEl = document.getElementById("modelSliderLabels");
+const attachImageBtnEl = document.getElementById("attachImageBtn");
+const imageInputEl = document.getElementById("imageInput");
+const attachmentMenuEl = document.getElementById("attachmentMenu");
+const attachmentImageOptionEl = document.getElementById("attachmentImageOption");
+const imagePreviewEl = document.getElementById("imagePreview");
+const imagePreviewThumbEl = document.getElementById("imagePreviewThumb");
+const removeImageBtnEl = document.getElementById("removeImageBtn");
 const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
 let chats = [];
@@ -68,8 +92,46 @@ let isSending = false;
 let pendingDeleteChatId = null;
 let selectedModelId = readStoredModel();
 let appInitialized = false;
+let pendingImageDataUrl = "";
 
 function nowTs() { return Date.now(); }
+function chatRouteId(chatOrId) {
+  const id = typeof chatOrId === "object" ? chatOrId?.id : chatOrId;
+  return String(id || "").replace(/\D/g, "") || "0";
+}
+function chatPath(chat) {
+  if (!chat) return "/chat";
+  return `/chat/${chatRouteId(chat)}`;
+}
+function chatPhotoPath(chat) { return `${chatPath(chat)}/photo.jpg`; }
+function syncChatUrl(chat, replace = false) {
+  if (!window.history || !chat) return;
+  const nextPath = chatPath(chat);
+  if (window.location.pathname === nextPath) return;
+  window.history[replace ? "replaceState" : "pushState"]({ chatId: chat.id }, "", nextPath);
+}
+function chatIdFromPath() {
+  const match = window.location.pathname.match(/^\/chat\/(\d+)$/);
+  if (!match) return null;
+  const routeId = match[1];
+  return chats.find((chat) => chatRouteId(chat) === routeId)?.id || null;
+}
+function showToast(message) {
+  if (!appToastEl) return;
+  const toast = document.createElement("div");
+  toast.className = "app-toast-item";
+  toast.textContent = message;
+  appToastEl.hidden = false;
+  appToastEl.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add("show"));
+  window.setTimeout(() => {
+    toast.classList.remove("show");
+    window.setTimeout(() => {
+      toast.remove();
+      if (!appToastEl.childElementCount) appToastEl.hidden = true;
+    }, 280);
+  }, 2200);
+}
 function readStoredModel() {
   try {
     const stored = localStorage.getItem(MODEL_STORAGE_KEY);
@@ -91,8 +153,8 @@ function setSelectedModel(modelId, persist = false) {
   const option = MODEL_OPTIONS.find((item) => item.id === modelId) || MODEL_OPTIONS.find((item) => item.id === DEFAULT_MODEL_ID);
   const provider = getProviderForModel(option.id);
   selectedModelId = option.id;
-  if (topbarTitleEl) topbarTitleEl.textContent = provider.label;
-  if (modelPickerBtnEl) modelPickerBtnEl.title = provider.label;
+  if (topbarTitleEl) topbarTitleEl.textContent = getModelDisplayName(option.id);
+  if (modelPickerBtnEl) modelPickerBtnEl.title = getModelDisplayName(option.id);
   if (modelQuickBtnEl) modelQuickBtnEl.title = `${provider.label}: ${option.label}`;
   if (modelMenuEl) {
     modelMenuEl.querySelectorAll("[data-provider]").forEach((button) => {
@@ -106,7 +168,67 @@ function setSelectedModel(modelId, persist = false) {
       button.setAttribute("aria-selected", String(isSelected));
     });
   }
+  updateImageAttachmentAvailability();
   if (persist) persistSelectedModel();
+}
+function isActiveChatModelLocked() {
+  const chat = getActiveChat();
+  return Boolean(chat && Array.isArray(chat.messages) && chat.messages.length > 0);
+}
+function updateModelLockState() {
+  const locked = isActiveChatModelLocked() || isSending;
+  if (modelPickerBtnEl) {
+    modelPickerBtnEl.disabled = locked;
+    modelPickerBtnEl.title = locked ? "مدل پس از شروع گفتگو قفل است" : getProviderForModel(selectedModelId).label;
+  }
+  if (modelQuickBtnEl) {
+    modelQuickBtnEl.disabled = locked;
+    modelQuickBtnEl.title = locked ? "مدل پس از شروع گفتگو قفل است" : `${getProviderForModel(selectedModelId).label}: ${getSelectedModel().label}`;
+  }
+  if (locked) {
+    closeModelMenu();
+    closeModelQuickMenu();
+  }
+}
+function modelAcceptsImages() { return Boolean(getSelectedModel()?.acceptsImages); }
+function updateImageAttachmentAvailability() {
+  if (!attachImageBtnEl || !attachmentImageOptionEl) return;
+  const enabled = modelAcceptsImages() && !isSending;
+  attachImageBtnEl.disabled = isSending;
+  attachmentImageOptionEl.disabled = !enabled;
+  attachmentImageOptionEl.title = enabled ? "افزودن تصویر" : "افزودن تصویر فقط با مدل Sol فعال است";
+  // Do not clear a selected image while a Sol request is being submitted.
+  // It must remain available until sendMessage reads it into the request body.
+  if (!modelAcceptsImages() && pendingImageDataUrl) clearPendingImage();
+}
+function closeAttachmentMenu() {
+  if (attachmentMenuEl) attachmentMenuEl.hidden = true;
+  if (attachImageBtnEl) attachImageBtnEl.setAttribute("aria-expanded", "false");
+}
+function closeAllMenus() {
+  closeModelMenu();
+  closeModelQuickMenu();
+  closeAttachmentMenu();
+  document.querySelectorAll(".dropdown-menu.show").forEach((menu) => menu.classList.remove("show"));
+}
+function toggleAttachmentMenu() {
+  if (!attachmentMenuEl || !attachImageBtnEl || isSending) return;
+  const willOpen = attachmentMenuEl.hidden;
+  if (willOpen) closeAllMenus();
+  attachmentMenuEl.hidden = !willOpen;
+  attachImageBtnEl.setAttribute("aria-expanded", String(willOpen));
+}
+function clearPendingImage() {
+  pendingImageDataUrl = "";
+  if (imageInputEl) imageInputEl.value = "";
+  if (attachImageBtnEl) attachImageBtnEl.classList.remove("has-image");
+  if (imagePreviewThumbEl) imagePreviewThumbEl.removeAttribute("src");
+  if (imagePreviewEl) imagePreviewEl.hidden = true;
+}
+function showPendingImagePreview(imageDataUrl) {
+  if (!imageDataUrl) { clearPendingImage(); return; }
+  if (imagePreviewThumbEl) imagePreviewThumbEl.src = imageDataUrl;
+  if (imagePreviewEl) imagePreviewEl.hidden = false;
 }
 function closeModelMenu() {
   if (modelMenuEl) {
@@ -116,8 +238,8 @@ function closeModelMenu() {
   if (modelPickerBtnEl) modelPickerBtnEl.setAttribute("aria-expanded", "false");
 }
 function openModelMenu() {
-  if (!modelMenuEl) return;
-  closeModelQuickMenu();
+  if (!modelMenuEl || isActiveChatModelLocked() || isSending) return;
+  closeAllMenus();
   modelMenuEl.hidden = false;
   modelMenuEl.classList.add("open");
   if (modelPickerBtnEl) modelPickerBtnEl.setAttribute("aria-expanded", "true");
@@ -134,8 +256,8 @@ function closeModelQuickMenu() {
   if (modelQuickBtnEl) modelQuickBtnEl.setAttribute("aria-expanded", "false");
 }
 function openModelQuickMenu() {
-  if (!modelQuickMenuEl) return;
-  closeModelMenu();
+  if (!modelQuickMenuEl || isActiveChatModelLocked() || isSending) return;
+  closeAllMenus();
   renderModelQuickMenu();
   modelQuickMenuEl.hidden = false;
   modelQuickMenuEl.classList.add("open");
@@ -198,6 +320,14 @@ function renderModelQuickMenu() {
   modelQuickRangeEl.value = String(selectedIndex);
   modelQuickRangeEl.style.setProperty("--quick-progress", `${(selectedIndex / maxIndex) * 100}%`);
   modelQuickRangeEl.setAttribute("aria-valuetext", provider.models[selectedIndex]?.label || "");
+  if (modelSliderLabelsEl) {
+    modelSliderLabelsEl.innerHTML = "";
+    provider.models.forEach((model) => {
+      const label = document.createElement("span");
+      label.textContent = model.label.replace("Flash ", "");
+      modelSliderLabelsEl.appendChild(label);
+    });
+  }
 }
 function toNumber(value, fallback = nowTs()) {
   const n = Number(value);
@@ -206,7 +336,12 @@ function toNumber(value, fallback = nowTs()) {
 function normalizeMessage(message) {
   if (!message || typeof message !== "object") return null;
   if (message.role !== "user" && message.role !== "assistant" && message.role !== "system") return null;
-  return { role: message.role, content: String(message.content || "") };
+  const normalized = { role: message.role, content: String(message.content || "") };
+  if (typeof message.image === "string" && message.image.startsWith("data:image/")) normalized.image = message.image;
+  if (typeof message.imageUrl === "string" && (message.imageUrl.startsWith("data:image/") || /^https?:\/\//.test(message.imageUrl))) normalized.imageUrl = message.imageUrl;
+  if (message._id) normalized._id = String(message._id);
+  if (message._parentId) normalized._parentId = String(message._parentId);
+  return normalized;
 }
 function normalizeProfile(profile) {
   const source = profile && typeof profile === "object" ? profile : {};
@@ -253,6 +388,37 @@ async function apiRequest(path, options = {}) {
     throw error;
   }
   return data;
+}
+async function streamApiRequest(path, body, onEvent) {
+  const response = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok || !response.body) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Request failed with status ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+    for (const rawEvent of events) {
+      const eventName = rawEvent.match(/^event:\s*(.+)$/m)?.[1] || "message";
+      const rawData = rawEvent.match(/^data:\s*(.+)$/m)?.[1];
+      if (!rawData) continue;
+      let payload;
+      try { payload = JSON.parse(rawData); } catch (error) { console.error("Invalid stream event:", error); continue; }
+      if (eventName === "error") throw new Error(payload.message || "خطا در دریافت پاسخ");
+      onEvent(eventName, payload);
+    }
+    if (done) break;
+  }
 }
 function getProfile() { return { ...currentProfile }; }
 function setProfile(profile) { currentProfile = normalizeProfile(profile); }
@@ -304,8 +470,7 @@ async function loadConversationDetail(conversationId) {
   return upsertConversation(data.conversation || data, true);
 }
 async function syncActiveConversationId(conversationId) {
-  if (!conversationId) return;
-  await apiRequest("/api/state", { method: "PATCH", body: JSON.stringify({ activeConversationId: String(conversationId) }) });
+  await apiRequest("/api/state", { method: "PATCH", body: JSON.stringify({ activeConversationId: conversationId ? String(conversationId) : null }) });
 }
 async function createChat(title = "گفت‌وگوی جدید") {
   const data = await apiRequest("/api/conversations", { method: "POST", body: JSON.stringify({}) });
@@ -315,12 +480,13 @@ async function createChat(title = "گفت‌وگوی جدید") {
   await syncActiveConversationId(activeChatId);
   renderChatList();
   renderActiveChat();
+  syncChatUrl(conversation);
   return conversation;
 }
 async function ensureActiveChat() {
   let chat = getActiveChat();
   if (!chat) {
-    if (chats.length > 0) { activeChatId = chats[0].id; await syncActiveConversationId(activeChatId).catch(console.error); chat = getActiveChat(); } else { chat = await createChat(); }
+    chat = await createChat();
   }
   if (chat && (!chat.messages || chat.messages.length === 0)) { await loadConversationDetail(chat.id).catch(console.error); chat = getActiveChat(); }
   return chat;
@@ -329,6 +495,7 @@ async function setActiveChat(chatId) {
   activeChatId = String(chatId);
   renderChatList();
   renderActiveChat();
+  syncChatUrl(getActiveChat());
   closeDrawer();
   await syncActiveConversationId(activeChatId);
   await loadConversationDetail(activeChatId);
@@ -351,6 +518,7 @@ async function confirmDeleteChat() {
   if (!pendingDeleteChatId) return;
   await deleteChat(pendingDeleteChatId);
   closeDeleteConfirmModal();
+  showToast("گفت‌وگو حذف شد");
 }
 async function deleteChat(chatId) {
   const id = String(chatId);
@@ -358,10 +526,12 @@ async function deleteChat(chatId) {
   if (index === -1) return;
   await apiRequest(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
   chats.splice(index, 1);
-  if (activeChatId === id) { activeChatId = chats[0] ? chats[0].id : null; if (activeChatId) await syncActiveConversationId(activeChatId).catch(console.error); }
-  if (chats.length === 0) { await createChat(); return; }
+  if (activeChatId === id) { activeChatId = chats[0] ? chats[0].id : null; await syncActiveConversationId(activeChatId).catch(console.error); }
   renderChatList();
   renderActiveChat();
+  const nextChat = getActiveChat();
+  if (nextChat) syncChatUrl(nextChat, true);
+  else window.history.replaceState({}, "", "/chat");
 }
 async function updateChatTitle(chatId, title) {
   const id = String(chatId);
@@ -372,6 +542,8 @@ async function updateChatTitle(chatId, title) {
   upsertConversation(data.conversation || data, false);
   renderChatList();
   renderActiveChat();
+  syncChatUrl(getActiveChat(), true);
+  showToast("عنوان گفت‌وگو ویرایش شد");
 }
 function updateChatTitleFromFirstMessage(chat) {
   if (!chat || chat.title !== "گفت‌وگوی جدید") return;
@@ -388,9 +560,10 @@ function closeOverlayIfIdle() {
   const deleteConfirmOpen = document.getElementById("deleteConfirmModal") && document.getElementById("deleteConfirmModal").classList.contains("show");
   if (!drawerOpen && !profileOpen && !deleteConfirmOpen && overlayEl) overlayEl.classList.remove("show");
 }
-function openDrawer() { if (drawerEl) drawerEl.classList.add("open"); openOverlay(); }
+function openDrawer() { closeAllMenus(); if (drawerEl) drawerEl.classList.add("open"); openOverlay(); }
 function closeDrawer() { if (drawerEl) drawerEl.classList.remove("open"); closeOverlayIfIdle(); }
 function openProfileModal() {
+  closeAllMenus();
   const profile = getProfile();
   if (profileResponseStyleEl) profileResponseStyleEl.value = profile.responseStyle;
   if (profileNameEl) profileNameEl.value = profile.name;
@@ -423,9 +596,43 @@ function renderMarkdownToHtml(markdown) {
   const html = [];
   let inCodeBlock = false;
   let codeLines = [];
+  let codeLanguage = "";
   let inList = false;
   function closeList() { if (inList) { html.push("</ul>"); inList = false; } }
-  function closeCodeBlock() { html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`); codeLines = []; inCodeBlock = false; }
+  function detectCodeLanguage(source, hintedLanguage = "") {
+    const hint = String(hintedLanguage || "").toLowerCase().trim();
+    const aliases = { js: "JavaScript", javascript: "JavaScript", ts: "TypeScript", typescript: "TypeScript", py: "Python", python: "Python", html: "HTML", css: "CSS", json: "JSON", bash: "Bash", shell: "Bash", sh: "Bash", sql: "SQL", java: "Java", c: "C", cpp: "C++", "c++": "C++", cs: "C#", csharp: "C#", php: "PHP", ruby: "Ruby", go: "Go", rust: "Rust", xml: "XML", yaml: "YAML", yml: "YAML", markdown: "Markdown", md: "Markdown", kotlin: "Kotlin", swift: "Swift", dart: "Dart", scala: "Scala", r: "R" };
+    if (aliases[hint]) return aliases[hint];
+    const code = String(source || "").trim();
+    if (/^[{\[]/.test(code)) return "JSON";
+    if (/^<!doctype html|<html[\s>]|<\/\w+>/.test(code.toLowerCase())) return "HTML";
+    if (/^(?:SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|ALTER TABLE|DROP TABLE)\b/im.test(code)) return "SQL";
+    if (/^(?:def |class |import |from \w+ import )/m.test(code)) return "Python";
+    if (/^(?:const |let |var |function |async function |export default |export const |import .* from |require\()/m.test(code)) return "JavaScript";
+    if (/^\s*[.#][\w-]+\s*\{/.test(code)) return "CSS";
+    if (/^\s*[\w.-]+\s*:\s*[^\s;{][^{]*$/m.test(code)) return "YAML";
+    if (/^(?:#include\s*<iostream>|using\s+namespace\s+std|std::)/m.test(code)) return "C++";
+    if (/^(?:#include\s*[<"]|int\s+main\s*\()/m.test(code)) return "C";
+    if (/^(?:#!\/bin|\$ |(?:git|npm|curl|python3?)\s)/m.test(code)) return "Bash";
+    if (/^(?:public\s+(?:static\s+)?void\s+main|package\s+\w+)/m.test(code)) return "Java";
+    return "Code";
+  }
+  function closeCodeBlock() {
+    const source = codeLines.join("\n");
+    const language = detectCodeLanguage(source, codeLanguage);
+    const languageClass = getLanguageClass(codeLanguage, language);
+    html.push(`<pre data-language="${escapeHtml(language)}" data-lang="${escapeHtml(languageClass)}"><code class="language-${escapeHtml(languageClass)}">${escapeHtml(source)}</code></pre>`);
+    codeLines = [];
+    codeLanguage = "";
+    inCodeBlock = false;
+  }
+  function getLanguageClass(hint, language) {
+    const normalizedHint = String(hint || "").toLowerCase().trim();
+    const hintClasses = { js: "javascript", javascript: "javascript", ts: "typescript", typescript: "typescript", py: "python", python: "python", html: "xml", css: "css", json: "json", bash: "bash", shell: "bash", sh: "bash", sql: "sql", java: "java", c: "c", cpp: "cpp", "c++": "cpp", cs: "csharp", csharp: "csharp", php: "php", ruby: "ruby", go: "go", rust: "rust", xml: "xml", yaml: "yaml", yml: "yaml", markdown: "markdown", md: "markdown", kotlin: "kotlin", swift: "swift", dart: "dart", scala: "scala", r: "r" };
+    if (hintClasses[normalizedHint]) return hintClasses[normalizedHint];
+    const labelClasses = { "JavaScript": "javascript", "TypeScript": "typescript", "Python": "python", "HTML": "xml", "CSS": "css", "JSON": "json", "Bash": "bash", "SQL": "sql", "Java": "java", "C": "c", "C++": "cpp", "C#": "csharp", "PHP": "php", "Ruby": "ruby", "Go": "go", "Rust": "rust", "XML": "xml", "YAML": "yaml", "Markdown": "markdown", "Kotlin": "kotlin", "Swift": "swift", "Dart": "dart", "Scala": "scala", "R": "r" };
+    return labelClasses[language] || "plaintext";
+  }
   function isMarkdownTableSeparator(line) { return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line.trim()); }
   function splitMarkdownTableRow(line) { return line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()); }
   function renderMarkdownTable(sourceLines, startIndex) {
@@ -440,7 +647,7 @@ function renderMarkdownToHtml(markdown) {
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const trimmed = line.trim();
-    if (trimmed.startsWith("```")) { if (inCodeBlock) { closeCodeBlock(); } else { closeList(); inCodeBlock = true; codeLines = []; } continue; }
+    if (trimmed.startsWith("```")) { if (inCodeBlock) { closeCodeBlock(); } else { closeList(); inCodeBlock = true; codeLines = []; codeLanguage = trimmed.slice(3).trim(); } continue; }
     if (inCodeBlock) { codeLines.push(line); continue; }
     if (index + 1 < lines.length && trimmed.includes("|") && isMarkdownTableSeparator(lines[index + 1])) {
       closeList();
@@ -473,19 +680,65 @@ function renderMarkdownToHtml(markdown) {
   closeList();
   return html.join("");
 }
+function attachCodeCopyButtons(container) {
+  if (!container) return;
+  container.querySelectorAll("pre").forEach((pre) => {
+    if (pre.querySelector(".code-copy-btn")) return;
+    const code = pre.querySelector("code");
+    if (!code) return;
+    const languageClass = pre.dataset.lang || "plaintext";
+    if (!code.classList.contains(`language-${languageClass}`)) code.classList.add(`language-${languageClass}`);
+    if (!code.dataset.highlighted && typeof window.hljs === "object" && window.hljs) {
+      try {
+        window.hljs.highlightElement(code);
+        code.dataset.highlighted = "true";
+      } catch (error) {
+        console.error("Code highlighting failed:", error);
+      }
+    }
+    const header = document.createElement("div");
+    header.className = "code-block-header";
+    const language = document.createElement("span");
+    language.className = "code-language-label";
+    language.textContent = pre.dataset.language || "Code";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "code-copy-btn";
+    button.setAttribute("aria-label", "کپی کد");
+    button.title = "کپی کد";
+    button.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" fill="currentColor"/></svg>`;
+    button.addEventListener("click", () => copyText(code.textContent || "", button));
+    header.appendChild(language);
+    header.appendChild(button);
+    pre.prepend(header);
+  });
+}
 function isLatexOnly(text) { const value = String(text || "").trim(); return /^\$\$[\s\S]+\$\$$/.test(value) || /^\\\[[\s\S]+\\\]$/.test(value) || /^\\\([\s\S]+\\\)$/.test(value); }
 function normalizeLatex(text) { return String(text || "").replace(/\\\[/g, "$$").replace(/\\\]/g, "$$").replace(/\\\(/g, "$").replace(/\\\)/g, "$"); }
 async function copyText(text, button) {
+  const value = String(text || "");
+  const markCopied = () => {
+    if (!button) return;
+    button.innerHTML = `<svg viewBox="0 0 24 24" class="action-icon" aria-hidden="true"><path fill="currentColor" d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>`;
+    setTimeout(() => {
+      button.innerHTML = `<svg viewBox="0 0 24 24" class="action-icon" aria-hidden="true"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"></path></svg>`;
+    }, 1200);
+  };
   try {
-    await navigator.clipboard.writeText(String(text || ""));
-    if (button) {
-      const previousLabel = button.getAttribute("aria-label") || "کپی";
-      button.innerHTML = `<svg viewBox="0 0 24 24" class="action-icon" aria-hidden="true"><path fill="currentColor" d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>`;
-      setTimeout(() => {
-        button.innerHTML = `<svg viewBox="0 0 24 24" class="action-icon" aria-hidden="true"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"></path></svg>`;
-      }, 1200);
+    if (navigator.clipboard?.writeText && window.isSecureContext) await navigator.clipboard.writeText(value);
+    else {
+      const textarea = document.createElement("textarea");
+      textarea.value = value;
+      textarea.setAttribute("readonly", "");
+      textarea.style.cssText = "position:fixed;opacity:0;pointer-events:none;";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand("copy");
+      textarea.remove();
+      if (!copied) throw new Error("Copy command failed");
     }
-  } catch (error) { console.error("Copy failed:", error); }
+    markCopied();
+  } catch (error) { console.error("Copy failed:", error); showToast("کپی کردن انجام نشد"); }
 }
 function createCopyButton(text) {
   const button = document.createElement("button");
@@ -520,9 +773,23 @@ function renderUserMessage(msg) {
   if (!messagesSectionEl) return;
   const wrapper = document.createElement("div");
   wrapper.className = "message user-wrap";
+  const stack = document.createElement("div");
+  stack.className = "user-message-stack";
   const bubble = document.createElement("div");
   bubble.className = "message user";
-  bubble.textContent = String(msg.content || "");
+  if (msg.image) {
+    const image = document.createElement("img");
+    image.className = "message-image user-message-image";
+    image.src = msg.image;
+    image.alt = "تصویر ارسال‌شده";
+    bubble.appendChild(image);
+  }
+  if (msg.content) {
+    const text = document.createElement("div");
+    text.className = "message-text";
+    text.textContent = String(msg.content || "");
+    bubble.appendChild(text);
+  }
   const actionsDiv = document.createElement("div");
   actionsDiv.className = "message-actions-overlay";
   actionsDiv.appendChild(createCopyButton(msg.content));
@@ -587,8 +854,9 @@ function renderUserMessage(msg) {
      };
   });
   actionsDiv.appendChild(editBtn);
-  wrapper.appendChild(bubble);
-  wrapper.appendChild(actionsDiv);
+  stack.appendChild(bubble);
+  stack.appendChild(actionsDiv);
+  wrapper.appendChild(stack);
   return wrapper;
 }
 function renderMessages(messages) {
@@ -644,26 +912,54 @@ function renderMessages(messages) {
       wrapper.className = "message assistant-wrap";
       wrapper.dataset.parent = group.id;
       wrapper.dataset.currentVersion = currentIndex;
+      const isStreaming = Boolean(currentMsg._streaming);
       const content = document.createElement("div");
       content.className = "assistant-content";
+      const renderVersionImage = (message) => {
+        wrapper.querySelector(".generated-image-frame")?.remove();
+        if (!message.imageUrl) return;
+        const imageFrame = document.createElement("div");
+        imageFrame.className = "generated-image-frame";
+        const image = document.createElement("img");
+        image.className = "message-image generated-message-image";
+        image.src = message.imageUrl;
+        image.alt = "تصویر تولیدشده";
+        image.loading = "lazy";
+        const download = document.createElement("a");
+        download.className = "generated-image-download";
+        download.href = message.imageUrl;
+        download.download = "gapino-generated-image.png";
+        download.setAttribute("aria-label", "دانلود تصویر");
+        download.title = "دانلود تصویر";
+        download.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        imageFrame.append(image, download);
+        wrapper.insertBefore(imageFrame, content);
+      };
       const messageText = String(currentMsg.content || "");
       const normalized = normalizeLatex(messageText);
       if (isLatexOnly(messageText)) { content.textContent = normalized; } else { content.innerHTML = renderMarkdownToHtml(normalized); }
+      attachCodeCopyButtons(content);
       wrapper.appendChild(content);
+      renderVersionImage(currentMsg);
       const actionsDiv = document.createElement("div");
       actionsDiv.className = "message-actions-overlay";
-      actionsDiv.appendChild(createCopyButton(messageText));
-      actionsDiv.appendChild(createRegenerateButton());
-      wrapper.appendChild(actionsDiv);
-      if (total > 1) {
+      if (!isStreaming) {
+        actionsDiv.appendChild(createCopyButton(messageText));
+        actionsDiv.appendChild(createRegenerateButton());
+      }
+      if (total > 1 && !isStreaming) {
         const paginationDiv = document.createElement("div");
         paginationDiv.className = "message-version-pagination";
-        const prevBtn = document.createElement("button");
-        prevBtn.textContent = "<";
-        prevBtn.disabled = currentIndex === 0;
-        const nextBtn = document.createElement("button");
-        nextBtn.textContent = ">";
-        nextBtn.disabled = currentIndex === total - 1;
+        const undoBtn = document.createElement("button");
+        undoBtn.textContent = "‹";
+        undoBtn.setAttribute("aria-label", "نسخهٔ قبلی");
+        undoBtn.title = "نسخهٔ قبلی";
+        undoBtn.disabled = currentIndex === 0;
+        const redoBtn = document.createElement("button");
+        redoBtn.textContent = "›";
+        redoBtn.setAttribute("aria-label", "نسخهٔ بعدی");
+        redoBtn.title = "نسخهٔ بعدی";
+        redoBtn.disabled = currentIndex === total - 1;
         const counterSpan = document.createElement("span");
         counterSpan.textContent = `${currentIndex + 1} / ${total}`;
         const updateVersion = (idx) => {
@@ -672,13 +968,16 @@ function renderMessages(messages) {
           const newText = String(targetMsg.content || "");
           const newNorm = normalizeLatex(newText);
           if (isLatexOnly(newText)) { content.textContent = newNorm; } else { content.innerHTML = renderMarkdownToHtml(newNorm); }
-          actionsDiv.innerHTML = "";
+          renderVersionImage(targetMsg);
+          attachCodeCopyButtons(content);
+          actionsDiv.querySelectorAll(".meta-btn").forEach((button) => button.remove());
           actionsDiv.appendChild(createCopyButton(newText));
           const regenBtn = createRegenerateButton();
           regenBtn.addEventListener("click", () => regenerateLastReply());
           actionsDiv.appendChild(regenBtn);
-          prevBtn.disabled = idx === 0;
-          nextBtn.disabled = idx === total - 1;
+          actionsDiv.appendChild(paginationDiv);
+          undoBtn.disabled = idx === 0;
+          redoBtn.disabled = idx === total - 1;
           counterSpan.textContent = `${idx + 1} / ${total}`;
           try {
             if (typeof renderMathInElement === "function") {
@@ -686,13 +985,14 @@ function renderMessages(messages) {
             }
           } catch (error) { console.error(error); }
         };
-        prevBtn.addEventListener("click", () => updateVersion(currentIndex - 1));
-        nextBtn.addEventListener("click", () => updateVersion(currentIndex + 1));
-        paginationDiv.appendChild(prevBtn);
+        undoBtn.addEventListener("click", () => updateVersion(Number(wrapper.dataset.currentVersion) - 1));
+        redoBtn.addEventListener("click", () => updateVersion(Number(wrapper.dataset.currentVersion) + 1));
+        paginationDiv.appendChild(undoBtn);
         paginationDiv.appendChild(counterSpan);
-        paginationDiv.appendChild(nextBtn);
-        wrapper.appendChild(paginationDiv);
+        paginationDiv.appendChild(redoBtn);
+        actionsDiv.appendChild(paginationDiv);
       }
+      if (!isStreaming) wrapper.appendChild(actionsDiv);
       messagesSectionEl.appendChild(wrapper);
       try {
         if (typeof renderMathInElement === "function") {
@@ -709,10 +1009,18 @@ function renderActiveChat() {
   if (emptyStateEl) emptyStateEl.style.display = hasMessages ? "none" : "";
   if (messagesSectionEl) messagesSectionEl.style.display = hasMessages ? "" : "none";
   renderMessages(chat ? chat.messages : []);
+  updateModelLockState();
 }
 function renderChatList() {
   if (!chatListEl) return;
   chatListEl.innerHTML = "";
+  if (chats.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "chat-list-empty";
+    empty.textContent = "گفت‌وگویی یافت نشد";
+    chatListEl.appendChild(empty);
+    return;
+  }
   for (const chat of chats) {
     chatListEl.appendChild(createChatItem(chat));
   }
@@ -760,7 +1068,7 @@ function createChatItem(chat) {
   const toggleMenu = (event) => {
     event.stopPropagation();
     const isOpen = menu.classList.contains("show");
-    document.querySelectorAll(".dropdown-menu.show").forEach(m => m.classList.remove("show"));
+    closeAllMenus();
     if(!isOpen) {
       menu.classList.add("show");
       const rect = toggleBtn.getBoundingClientRect();
@@ -795,7 +1103,18 @@ function updateSendingState(value) {
   isSending = value;
   if (sendBtnEl) sendBtnEl.disabled = value;
   if (userInputEl) userInputEl.disabled = value;
-  if (modelQuickBtnEl) modelQuickBtnEl.disabled = value;
+  updateModelLockState();
+  updateImageAttachmentAvailability();
+}
+function setSendButtonLoading(loading) {
+  if (!sendBtnEl) return;
+  sendBtnEl.disabled = loading;
+  sendBtnEl.innerHTML = loading
+    ? `<div class="spinner"></div>`
+    : `<svg viewBox="0 0 24 24" class="icon-send" aria-hidden="true"><path d="M12 19V5m0 0 6 6m-6-6-6 6" /></svg>`;
+  sendBtnEl.style.display = loading ? "flex" : "";
+  sendBtnEl.style.alignItems = loading ? "center" : "";
+  sendBtnEl.style.justifyContent = loading ? "center" : "";
 }
 function showLoadingIndicator(userMsgId) {
   if (!messagesSectionEl) return;
@@ -841,7 +1160,7 @@ async function requestAssistantReply(messages, model = selectedModelId) {
   return response;
 }
 async function saveConversationMessages(chatId, messages, title) {
-  const payload = { messages: messages.map((message) => ({ role: message.role, content: String(message.content || "") })) };
+  const payload = { messages: messages.map((message) => ({ role: message.role, content: String(message.content || ""), ...(message.image ? { image: message.image } : {}), ...(message.imageUrl ? { imageUrl: message.imageUrl } : {}) })) };
   if (title) payload.title = title;
   const data = await apiRequest(`/api/conversations/${encodeURIComponent(chatId)}`, { method: "PATCH", body: JSON.stringify(payload) });
   upsertConversation(data.conversation || data, false);
@@ -854,26 +1173,32 @@ async function sendMessage(promptOverride = null) {
   if (!chat) return;
   const rawText = typeof promptOverride === "string" && promptOverride.length > 0 ? promptOverride : userInputEl ? userInputEl.value : "";
   const text = String(rawText || "").trim();
-  if (!text) return;
+  if (!text && !pendingImageDataUrl) return;
+  if (pendingImageDataUrl && !modelAcceptsImages()) return;
   updateSendingState(true);
-  if (sendBtnEl) {
-    sendBtnEl.disabled = true;
-    sendBtnEl.innerHTML = `<div class="spinner"></div>`;
-    sendBtnEl.style.display = "flex";
-    sendBtnEl.style.alignItems = "center";
-    sendBtnEl.style.justifyContent = "center";
-  }
+  setSendButtonLoading(true);
   const tempUserMsgId = `${nowTs()}`;
-  const tempUserMsg = { role: "user", content: text, _id: tempUserMsgId };
+  const image = pendingImageDataUrl;
+  const tempUserMsg = { role: "user", content: text, ...(image ? { image } : {}), _id: tempUserMsgId };
   chat.messages.push(tempUserMsg);
   renderActiveChat();
   if (userInputEl) { userInputEl.value = ""; autoResizeTextarea(); }
+  clearPendingImage();
   try {
-    const data = await apiRequest(`/api/conversations/${encodeURIComponent(chat.id)}/messages`, {
-      method: "POST",
-      body: JSON.stringify({ content: text, model: selectedModelId })
+    chat.messages.push({ role: "assistant", content: "", _parentId: tempUserMsgId, _id: `stream_${nowTs()}`, _streaming: true });
+    renderActiveChat();
+    const currentStreamingReply = chat.messages.find((message) => message._streaming);
+    let updatedConversation = null;
+    await streamApiRequest(`/api/conversations/${encodeURIComponent(chat.id)}/messages/stream`, { content: text, image, model: selectedModelId, clientMessageId: tempUserMsgId }, (eventName, payload) => {
+      if (eventName === "delta" && currentStreamingReply) {
+        currentStreamingReply.content += String(payload.content || "");
+        if (payload.imageUrl) currentStreamingReply.imageUrl = payload.imageUrl;
+        renderActiveChat();
+      }
+      if (eventName === "done") updatedConversation = payload.conversation || null;
     });
-    const updatedConversation = data.conversation || data;
+    if (currentStreamingReply) delete currentStreamingReply._streaming;
+    if (!updatedConversation) throw new Error("پاسخ گفتگو دریافت نشد.");
     upsertConversation(updatedConversation, false);
     activeChatId = String(updatedConversation.id || chat.id);
     renderChatList();
@@ -881,18 +1206,24 @@ async function sendMessage(promptOverride = null) {
   } catch (error) {
     console.error("sendMessage failed:", error);
     if (userInputEl) userInputEl.value = text;
+    if (image) { pendingImageDataUrl = image; if (attachImageBtnEl) attachImageBtnEl.classList.add("has-image"); showPendingImagePreview(image); }
     alert("خطا در ارسال پیام: " + (error.message || ""));
   } finally {
     updateSendingState(false);
-    if (sendBtnEl) {
-      sendBtnEl.disabled = false;
-      sendBtnEl.innerHTML = `<svg viewBox="0 0 24 24" class="icon-send" aria-hidden="true"><path d="M12 19V5m0 0 6 6m-6-6-6 6" /></svg>`;
-      sendBtnEl.style.display = "";
-      sendBtnEl.style.alignItems = "";
-      sendBtnEl.style.justifyContent = "";
-    }
+    setSendButtonLoading(false);
     if (userInputEl) userInputEl.focus();
   }
+}
+async function typeAssistantReply(message, content) {
+  const text = String(content || "");
+  const chunkSize = Math.max(1, Math.ceil(text.length / 90));
+  message.content = "";
+  for (let offset = 0; offset < text.length; offset += chunkSize) {
+    message.content += text.slice(offset, offset + chunkSize);
+    renderActiveChat();
+    await new Promise((resolve) => window.setTimeout(resolve, 14));
+  }
+  if (!text) renderActiveChat();
 }
 async function regenerateLastReply(userMsgIndex = null) {
   if (isSending) return;
@@ -911,32 +1242,36 @@ async function regenerateLastReply(userMsgIndex = null) {
     chat.messages[lastUserIndex]._id = userMsgId;
   }
   const truncatedMessages = chat.messages.slice(0, lastUserIndex + 1);
-  chat.messages = chat.messages.filter((m, i) => i <= lastUserIndex || (m.role !== "assistant"));
-  showLoadingIndicator(userMsgId);
   updateSendingState(true);
+  setSendButtonLoading(true);
+  showLoadingIndicator(userMsgId);
   try {
     const response = await requestAssistantReply(truncatedMessages);
     const assistantReply = extractAssistantContent(response) || "پاسخی دریافت نشد.";
-    chat.messages.push({ role: "assistant", content: assistantReply, _parentId: userMsgId });
+    const streamingReply = { role: "assistant", content: "", _parentId: userMsgId, _id: `stream_${nowTs()}`, _streaming: true };
+    chat.messages.push(streamingReply);
+    renderActiveChat();
+    await typeAssistantReply(streamingReply, assistantReply);
+    delete streamingReply._streaming;
     if (!chat.title || chat.title === "گفت‌وگوی جدید") updateChatTitleFromFirstMessage(chat);
     await saveConversationMessages(chat.id, chat.messages, chat.title);
     renderChatList();
     renderActiveChat();
   } catch (error) { console.error(error); } finally {
     updateSendingState(false);
+    setSendButtonLoading(false);
     hideLoadingIndicator();
     if (userInputEl) userInputEl.focus();
   }
 }
 async function handleNewChat() {
-  const chat = getActiveChat();
-  if (chat && chat.messages && chat.messages.length === 0) {
-    closeDrawer();
-    if (userInputEl) userInputEl.focus();
-    return;
-  }
-  await createChat();
+  activeChatId = null;
+  await syncActiveConversationId(null).catch(console.error);
+  window.history.pushState({}, "", "/chat");
+  renderChatList();
+  renderActiveChat();
   closeDrawer();
+  showToast("آمادهٔ گفت‌وگوی جدید");
   if (userInputEl) userInputEl.focus();
 }
 function handleOverlayClick() {
@@ -950,6 +1285,7 @@ async function saveProfile() {
   const profile = { name: profileNameEl ? profileNameEl.value.trim() : "", job: profileJobEl ? profileJobEl.value.trim() : "", systemPrompt: profileSystemPromptEl ? profileSystemPromptEl.value.trim() : "", responseStyle: profileResponseStyleEl ? profileResponseStyleEl.value.trim() : "" };
   const data = await apiRequest("/api/profile", { method: "PATCH", body: JSON.stringify(profile) });
   setProfile(data.profile || profile);
+  showToast("تغییرات پروفایل ذخیره شد");
 }
 async function initializeState() {
   if (appInitialized) return;
@@ -961,9 +1297,12 @@ async function initializeState() {
   chats = Array.isArray(state.conversations) ? state.conversations.map(normalizeConversationSummary).filter(Boolean) : [];
   sortChats();
   activeChatId = state.activeConversationId ? String(state.activeConversationId) : chats[0] ? chats[0].id : null;
-  if (!activeChatId) { const created = await createChat(); activeChatId = String(created.id); } else { await loadConversationDetail(activeChatId).catch(console.error); }
+  const routeChatId = chatIdFromPath();
+  if (routeChatId && chats.some((chat) => chat.id === routeChatId)) activeChatId = routeChatId;
+  if (activeChatId) await loadConversationDetail(activeChatId).catch(console.error);
   renderChatList();
   renderActiveChat();
+  if (activeChatId) syncChatUrl(getActiveChat(), true);
   autoResizeTextarea();
 }
 
@@ -982,19 +1321,19 @@ async function checkAuth() {
 function showPinGate() {
   if (pinGateEl) pinGateEl.setAttribute("aria-hidden", "false");
   if (appEl) appEl.setAttribute("aria-hidden", "true");
-  if (pinInputEl) pinInputEl.focus();
+  if (usernameInputEl) usernameInputEl.focus();
 }
 function hidePinGate() {
   if (pinGateEl) pinGateEl.setAttribute("aria-hidden", "true");
   if (appEl) appEl.setAttribute("aria-hidden", "false");
 }
-async function submitPin(pin) {
+async function submitLogin(username, password) {
   try {
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ pin }),
+      body: JSON.stringify({ username, password }),
     });
     return res.ok;
   } catch {
@@ -1004,20 +1343,21 @@ async function submitPin(pin) {
 if (pinFormEl) {
   pinFormEl.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const pin = pinInputEl ? pinInputEl.value.trim() : "";
-    if (!pin) return;
+    const username = usernameInputEl ? usernameInputEl.value.trim() : "";
+    const password = passwordInputEl ? passwordInputEl.value : "";
+    if (!username || !password) return;
     if (pinErrorEl) pinErrorEl.hidden = true;
-    const ok = await submitPin(pin);
+    const ok = await submitLogin(username, password);
     if (ok) {
       hidePinGate();
-      if (pinInputEl) pinInputEl.value = "";
+      if (usernameInputEl) usernameInputEl.value = "";
+      if (passwordInputEl) passwordInputEl.value = "";
+      if (window.location.pathname === "/") window.history.replaceState({}, "", "/chat");
       await initializeState();
     } else {
       if (pinErrorEl) pinErrorEl.hidden = false;
-      if (pinInputEl) {
-        pinInputEl.value = "";
-        pinInputEl.focus();
-      }
+      if (passwordInputEl) passwordInputEl.value = "";
+      if (usernameInputEl) usernameInputEl.focus();
     }
   });
 }
@@ -1026,6 +1366,18 @@ if (pinFormEl) {
 /* Boot                                                                     */
 /* ----------------------------------------------------------------------- */
 if (sendBtnEl) sendBtnEl.addEventListener("click", (event) => { event.preventDefault(); void sendMessage(); });
+if (attachImageBtnEl) attachImageBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleAttachmentMenu(); });
+if (attachmentImageOptionEl) attachmentImageOptionEl.addEventListener("click", () => { if (modelAcceptsImages() && imageInputEl) imageInputEl.click(); closeAttachmentMenu(); });
+if (removeImageBtnEl) removeImageBtnEl.addEventListener("click", clearPendingImage);
+if (imageInputEl) imageInputEl.addEventListener("change", () => {
+  const file = imageInputEl.files && imageInputEl.files[0];
+  if (!file) return;
+  if (!modelAcceptsImages()) { clearPendingImage(); return; }
+  if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) { alert("فقط تصویر تا ۵ مگابایت قابل ارسال است."); clearPendingImage(); return; }
+  const reader = new FileReader();
+  reader.onload = () => { pendingImageDataUrl = String(reader.result || ""); if (attachImageBtnEl) attachImageBtnEl.classList.add("has-image"); showPendingImagePreview(pendingImageDataUrl); };
+  reader.readAsDataURL(file);
+});
 if (modelQuickBtnEl) modelQuickBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleModelQuickMenu(); });
 if (modelQuickRangeEl) {
   modelQuickRangeEl.addEventListener("input", () => {
@@ -1035,6 +1387,7 @@ if (modelQuickRangeEl) {
     modelQuickRangeEl.setAttribute("aria-valuetext", provider.models[index]?.label || "");
   });
   modelQuickRangeEl.addEventListener("change", () => {
+    if (isActiveChatModelLocked() || isSending) return;
     const provider = getProviderForModel(selectedModelId);
     const index = Math.min(provider.models.length - 1, Math.max(0, Number(modelQuickRangeEl.value) || 0));
     const nextModelId = provider.models[index].id;
@@ -1044,12 +1397,25 @@ if (modelQuickRangeEl) {
   });
 }
 if (userInputEl) userInputEl.addEventListener("input", autoResizeTextarea);
-if (modelPickerBtnEl) modelPickerBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleModelMenu(); });
+if (modelPickerBtnEl) modelPickerBtnEl.addEventListener("click", (event) => { event.stopPropagation(); if (!isActiveChatModelLocked()) toggleModelMenu(); });
 if (menuBtnEl) menuBtnEl.addEventListener("click", openDrawer);
 if (closeDrawerBtnEl) closeDrawerBtnEl.addEventListener("click", closeDrawer);
 if (overlayEl) overlayEl.addEventListener("click", handleOverlayClick);
 if (newChatBtnEl) newChatBtnEl.onclick = () => { void handleNewChat(); };
+if (topbarNewChatBtnEl) topbarNewChatBtnEl.addEventListener("click", () => {
+  void handleNewChat().catch(console.error);
+});
+if (logoutBtnEl) logoutBtnEl.addEventListener("click", async () => {
+  try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); } catch (error) { console.error(error); }
+  closeDrawer();
+  appInitialized = false;
+  chats = [];
+  activeChatId = null;
+  window.history.replaceState({}, "", "/");
+  showPinGate();
+});
 if (profileBtnEl) profileBtnEl.addEventListener("click", openProfileModal);
+if (profileModalEl) profileModalEl.addEventListener("click", (event) => { if (event.target === profileModalEl) closeProfileModal(); });
 if (closeProfileBtnEl) closeProfileBtnEl.addEventListener("click", closeProfileModal);
 if (saveProfileBtnEl) saveProfileBtnEl.addEventListener("click", () => { void saveProfile().then(() => closeProfileModal()).catch(console.error); });
 if (themeToggleEl) themeToggleEl.addEventListener("click", cycleTheme);
@@ -1061,12 +1427,18 @@ if (mediaQuery) {
 document.addEventListener("click", (event) => {
   if (modelMenuEl && modelPickerBtnEl && !modelMenuEl.contains(event.target) && !modelPickerBtnEl.contains(event.target)) closeModelMenu();
   if (modelQuickMenuEl && modelQuickBtnEl && !modelQuickMenuEl.contains(event.target) && !modelQuickBtnEl.contains(event.target)) closeModelQuickMenu();
+  if (attachmentMenuEl && attachImageBtnEl && !attachmentMenuEl.contains(event.target) && !attachImageBtnEl.contains(event.target)) closeAttachmentMenu();
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeModelMenu();
     closeModelQuickMenu();
+    closeAttachmentMenu();
   }
+});
+window.addEventListener("popstate", async () => {
+  const chatId = chatIdFromPath();
+  if (chatId && chats.some((chat) => chat.id === chatId)) await setActiveChat(chatId);
 });
 
 const deleteConfirmModalHTML = `
@@ -1102,8 +1474,9 @@ setSelectedModel(selectedModelId);
 
 (async () => {
   const authed = await checkAuth();
-  if (authed) {
+if (authed) {
     hidePinGate();
+    if (window.location.pathname === "/") window.history.replaceState({}, "", "/chat");
     await initializeState();
   } else {
     showPinGate();

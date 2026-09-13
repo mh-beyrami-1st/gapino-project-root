@@ -4,12 +4,13 @@ import os
 import secrets
 import sqlite3
 import time
+import base64
 from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
 import requests
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, redirect, request, send_from_directory, stream_with_context
 
 load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -29,32 +30,40 @@ DATABASE_LOCK = RLock()
 # Static files are served explicitly below so unknown client-side routes can
 # fall back to index.html (useful for PWA navigation and browser refreshes).
 app = Flask(__name__, static_folder=None)
+app.json.ensure_ascii = False
 
 PORT = int(os.getenv("PORT", 3000))
 HOST = "0.0.0.0"
 GAPGPT_API_KEY = os.getenv("GAPGPT_API_KEY")
 GAPGPT_API_URL = os.getenv("GAPGPT_API_URL")
-APP_PIN = os.getenv("APP_PIN", "")
-PROMPT_MODEL = "gemini-2.5-flash-lite"
+IMAGE_GENERATION_API_URL = os.getenv("IMAGE_GENERATION_API_URL") or (GAPGPT_API_URL or "").replace("/chat/completions", "/images/generations")
+PROMPT_MODEL = "gemini-3.1-flash-lite"
 SESSION_TTL = 60 * 60 * 24 * 30  # 30 days
 SESSION_COOKIE_NAME = "gapino_session"
 SUPPORTED_CHAT_MODELS = frozenset(
     {
-        "gpt-5.4-nano",
-        "gpt-5.4-mini",
-        "gpt-5.4",
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gemini-3.1-pro-preview",
+        "gemini-3.6-flash",
+        "gemini-3.1-flash-lite",
     }
 )
+IMAGE_INPUT_MODEL = "gpt-5.6-sol"
+IMAGE_GENERATION_MODELS = {
+    "gpt": "gpt-image-1-mini",
+    "gemini": "gapgpt/z-image",
+}
+DEFAULT_USERS = {
+    "admin": "Mohammad1389",
+    "user": "123456",
+}
 
 if not GAPGPT_API_KEY:
     raise RuntimeError("Missing GAPGPT_API_KEY in .env")
 if not GAPGPT_API_URL:
     raise RuntimeError("Missing GAPGPT_API_URL in .env")
-if not APP_PIN:
-    raise RuntimeError("Missing APP_PIN in .env")
 
 
 @contextmanager
@@ -81,6 +90,7 @@ def initialize_database():
             """
             CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
+                owner_username TEXT NOT NULL DEFAULT 'admin',
                 title TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
@@ -90,6 +100,10 @@ def initialize_database():
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
                 content TEXT NOT NULL,
+                image TEXT,
+                image_url TEXT,
+                message_key TEXT,
+                parent_key TEXT,
                 timestamp INTEGER NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES conversations(id) ON DELETE CASCADE
             );
@@ -101,6 +115,7 @@ def initialize_database():
             );
             CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
+                username TEXT NOT NULL DEFAULT 'admin',
                 created_at INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL
             );
@@ -108,6 +123,21 @@ def initialize_database():
                 ON sessions(expires_at);
             """
         )
+        message_columns = {row["name"] for row in connection.execute("PRAGMA table_info(messages)").fetchall()}
+        conversation_columns = {row["name"] for row in connection.execute("PRAGMA table_info(conversations)").fetchall()}
+        session_columns = {row["name"] for row in connection.execute("PRAGMA table_info(sessions)").fetchall()}
+        if "owner_username" not in conversation_columns:
+            connection.execute("ALTER TABLE conversations ADD COLUMN owner_username TEXT NOT NULL DEFAULT 'admin'")
+        if "username" not in session_columns:
+            connection.execute("ALTER TABLE sessions ADD COLUMN username TEXT NOT NULL DEFAULT 'admin'")
+        if "image" not in message_columns:
+            connection.execute("ALTER TABLE messages ADD COLUMN image TEXT")
+        if "image_url" not in message_columns:
+            connection.execute("ALTER TABLE messages ADD COLUMN image_url TEXT")
+        if "message_key" not in message_columns:
+            connection.execute("ALTER TABLE messages ADD COLUMN message_key TEXT")
+        if "parent_key" not in message_columns:
+            connection.execute("ALTER TABLE messages ADD COLUMN parent_key TEXT")
         connection.commit()
 
 
@@ -129,28 +159,44 @@ def json_error(message, status=400, **extra):
     return jsonify(payload), status
 
 
+def repair_mojibake(value):
+    """Repair UTF-8 text that an upstream service decoded as Latin-1 once."""
+    if not isinstance(value, str):
+        return value
+    mojibake_markers = ("Ø", "Ù", "Ú", "â", "Ã", "\x80", "\x8c", "\x9d")
+    if not any(marker in value for marker in mojibake_markers):
+        return value
+    try:
+        repaired = value.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
+    return repaired if any("\u0600" <= char <= "\u06ff" for char in repaired) else value
+
+
 # ---------------------------------------------------------------------------
 # Authentication helpers
 # ---------------------------------------------------------------------------
 
-def verify_pin(pin: str) -> bool:
-    if not APP_PIN or not pin:
+def verify_credentials(username: str, password: str) -> bool:
+    normalized_username = str(username or "").strip().lower()
+    expected_password = DEFAULT_USERS.get(normalized_username)
+    if not expected_password:
         return False
     return hmac.compare_digest(
-        str(pin).strip().encode("utf-8"),
-        str(APP_PIN).strip().encode("utf-8"),
+        str(password or "").encode("utf-8"),
+        expected_password.encode("utf-8"),
     )
 
 
-def issue_session_token() -> str:
+def issue_session_token(username: str) -> str:
     token = secrets.token_urlsafe(32)
     now = now_ts()
     with DATABASE_LOCK:
         with database_connection() as connection:
             with connection:
                 connection.execute(
-                    "INSERT INTO sessions (token, created_at, expires_at) VALUES (?, ?, ?)",
-                    (token, now, now + SESSION_TTL),
+                    "INSERT INTO sessions (token, username, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                    (token, username, now, now + SESSION_TTL),
                 )
                 connection.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
     return token
@@ -181,6 +227,18 @@ def get_session_token() -> str:
     return request.cookies.get(SESSION_COOKIE_NAME, "")
 
 
+def get_current_username() -> str:
+    token = get_session_token()
+    if not token:
+        return ""
+    with DATABASE_LOCK:
+        with database_connection() as connection:
+            row = connection.execute(
+                "SELECT username, expires_at FROM sessions WHERE token = ?", (token,)
+            ).fetchone()
+    return str(row["username"]).lower() if row and row["expires_at"] > now_ts() else ""
+
+
 # ---------------------------------------------------------------------------
 # State helpers
 # ---------------------------------------------------------------------------
@@ -204,9 +262,19 @@ def normalize_message(message):
     content = message.get("content", "")
     if content is None:
         content = ""
-    normalized = {"role": role, "content": str(content)}
+    normalized = {"role": role, "content": repair_mojibake(str(content))}
+    image = message.get("image")
+    if isinstance(image, str) and image.startswith("data:image/"):
+        normalized["image"] = image
+    image_url = message.get("imageUrl") or message.get("image_url")
+    if isinstance(image_url, str) and image_url.startswith(("https://", "http://", "data:image/")):
+        normalized["imageUrl"] = image_url
     if "name" in message:
         normalized["name"] = str(message.get("name") or "")
+    if message.get("_id"):
+        normalized["_id"] = str(message["_id"])
+    if message.get("_parentId"):
+        normalized["_parentId"] = str(message["_parentId"])
     return normalized
 
 
@@ -283,21 +351,32 @@ def normalize_state(state):
     }
 
 
-def _load_store_unlocked():
+def _load_store_unlocked(owner_username="admin"):
     """Read the application state from SQLite into the API's state shape."""
     with database_connection() as connection:
         conversations = []
         conversation_rows = connection.execute(
             "SELECT id, title, created_at, updated_at FROM conversations "
-            "ORDER BY updated_at DESC, created_at DESC"
+            "WHERE owner_username = ? ORDER BY updated_at DESC, created_at DESC",
+            (owner_username,),
         ).fetchall()
         message_rows = connection.execute(
-            "SELECT session_id, role, content FROM messages ORDER BY timestamp ASC, id ASC"
+            "SELECT m.session_id, m.role, m.content, m.image, m.image_url, m.message_key, m.parent_key "
+            "FROM messages m JOIN conversations c ON c.id = m.session_id "
+            "WHERE c.owner_username = ? ORDER BY m.timestamp ASC, m.id ASC",
+            (owner_username,),
         ).fetchall()
         messages_by_session = {}
         for row in message_rows:
             messages_by_session.setdefault(row["session_id"], []).append(
-                {"role": row["role"], "content": row["content"]}
+                {
+                    "role": row["role"],
+                    "content": row["content"],
+                    **({"image": row["image"]} if row["image"] else {}),
+                    **({"imageUrl": row["image_url"]} if row["image_url"] else {}),
+                    **({"_id": row["message_key"]} if row["message_key"] else {}),
+                    **({"_parentId": row["parent_key"]} if row["parent_key"] else {}),
+                }
             )
         for row in conversation_rows:
             conversations.append(
@@ -311,31 +390,34 @@ def _load_store_unlocked():
             )
         state_values = {
             row["key"]: row["value"]
-            for row in connection.execute("SELECT key, value FROM app_state").fetchall()
+            for row in connection.execute(
+                "SELECT key, value FROM app_state WHERE key LIKE ?", (f"{owner_username}:%",)
+            ).fetchall()
         }
     state = default_state()
     try:
-        state["profile"] = json.loads(state_values.get("profile", "{}"))
+        state["profile"] = json.loads(state_values.get(f"{owner_username}:profile", "{}"))
     except json.JSONDecodeError:
         state["profile"] = {}
-    state["theme"] = state_values.get("theme", DEFAULT_THEME)
-    state["activeConversationId"] = state_values.get("activeConversationId")
+    state["theme"] = state_values.get(f"{owner_username}:theme", DEFAULT_THEME)
+    state["activeConversationId"] = state_values.get(f"{owner_username}:activeConversationId")
     state["conversations"] = conversations
     return normalize_state(state)
 
 
-def _save_store_unlocked(state):
+def _save_store_unlocked(state, owner_username="admin"):
     """Persist a complete normalized state atomically in one SQLite transaction."""
     normalized = normalize_state(state)
     with database_connection() as connection:
         with connection:
-            connection.execute("DELETE FROM messages")
-            connection.execute("DELETE FROM conversations")
+            connection.execute("DELETE FROM messages WHERE session_id IN (SELECT id FROM conversations WHERE owner_username = ?)", (owner_username,))
+            connection.execute("DELETE FROM conversations WHERE owner_username = ?", (owner_username,))
             connection.executemany(
-                "INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO conversations (id, owner_username, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                 [
                     (
                         conversation["id"],
+                        owner_username,
                         conversation["title"],
                         conversation["createdAt"],
                         conversation["updatedAt"],
@@ -344,12 +426,16 @@ def _save_store_unlocked(state):
                 ],
             )
             connection.executemany(
-                "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+                "INSERT INTO messages (session_id, role, content, image, image_url, message_key, parent_key, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         conversation["id"],
                         message["role"],
                         message["content"],
+                        message.get("image"),
+                        message.get("imageUrl"),
+                        message.get("_id"),
+                        message.get("_parentId"),
                         conversation["createdAt"] + index,
                     )
                     for conversation in normalized["conversations"]
@@ -357,9 +443,9 @@ def _save_store_unlocked(state):
                 ],
             )
             state_values = {
-                "profile": json.dumps(normalized["profile"], ensure_ascii=False),
-                "theme": normalized["theme"],
-                "activeConversationId": normalized["activeConversationId"] or "",
+                f"{owner_username}:profile": json.dumps(normalized["profile"], ensure_ascii=False),
+                f"{owner_username}:theme": normalized["theme"],
+                f"{owner_username}:activeConversationId": normalized["activeConversationId"] or "",
             }
             connection.executemany(
                 "INSERT INTO app_state (key, value) VALUES (?, ?) "
@@ -369,16 +455,18 @@ def _save_store_unlocked(state):
     return normalized
 
 
-def load_store():
+def load_store(owner_username=None):
+    owner_username = owner_username or get_current_username() or "admin"
     with DATABASE_LOCK:
-        return _load_store_unlocked()
+        return _load_store_unlocked(owner_username)
 
 
-def update_store(mutator):
+def update_store(mutator, owner_username=None):
+    owner_username = owner_username or get_current_username() or "admin"
     with DATABASE_LOCK:
-        state = _load_store_unlocked()
+        state = _load_store_unlocked(owner_username)
         result = mutator(state)
-        state = _save_store_unlocked(state)
+        state = _save_store_unlocked(state, owner_username)
         return state, result
 
 
@@ -422,7 +510,7 @@ def serialize_conversation(conversation):
 def create_conversation(state, title=None):
     timestamp = now_ts()
     conversation = {
-        "id": f"{timestamp}_{os.urandom(4).hex()}",
+        "id": f"{timestamp}{secrets.randbelow(1_000_000):06d}",
         "title": str(title or DEFAULT_CONVERSATION_TITLE).strip() or DEFAULT_CONVERSATION_TITLE,
         "messages": [],
         "createdAt": timestamp,
@@ -461,11 +549,101 @@ def request_upstream_chat(messages, model):
         json=payload,
         timeout=120,
     )
+    response.encoding = "utf-8"
     try:
         data = response.json()
     except ValueError:
         data = {"raw": response.text}
     return response.status_code, data
+
+
+def extract_stream_delta(data):
+    if not isinstance(data, dict):
+        return ""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return ""
+    choice = choices[0]
+    delta = choice.get("delta")
+    if isinstance(delta, dict):
+        value = delta.get("content")
+        if isinstance(value, str):
+            return repair_mojibake(value)
+    message = choice.get("message")
+    if isinstance(message, dict) and isinstance(message.get("content"), str):
+        return repair_mojibake(message["content"])
+    return ""
+
+
+def upstream_message(message):
+    """Convert an internal message to the OpenAI-compatible multimodal format."""
+    if message.get("role") == "user" and message.get("image"):
+        return {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": str(message.get("content") or "")},
+                {"type": "image_url", "image_url": {"url": message["image"]}},
+            ],
+        }
+    return {"role": message["role"], "content": str(message.get("content") or "")}
+
+
+def wants_image_generation(content):
+    text = str(content or "").lower()
+    image_words = ("عکس", "تصویر", "تصویری", "image", "photo", "picture", "artwork")
+    request_words = (
+        "بساز", "بسازید", "ساخت", "تولید", "درست کن", "درستش کن",
+        "بکش", "طراحی کن", "رندر کن", "میخوام", "می‌خوام", "می خواهم",
+        "generate", "create", "make", "draw", "render",
+    )
+    return any(word in text for word in image_words) and any(word in text for word in request_words)
+
+
+def provider_for_model(model):
+    return "gpt" if str(model).startswith("gpt-") else "gemini"
+
+
+def generate_image_prompt(user_content, model):
+    status, data = request_upstream_chat(
+        [
+            {
+                "role": "system",
+                "content": "Turn the user's request into one polished, detailed English image-generation prompt. Preserve requested subjects, style, composition, lighting, aspect ratio and any Persian text exactly. Output only the prompt.",
+            },
+            {"role": "user", "content": user_content},
+        ],
+        model,
+    )
+    prompt = extract_assistant_content(data)
+    return prompt if status < 400 and prompt else str(user_content)
+
+
+def request_upstream_image(prompt, model):
+    response = requests.post(
+        IMAGE_GENERATION_API_URL,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {GAPGPT_API_KEY}"},
+        json={"model": model, "prompt": prompt, "size": "1024x1024"},
+        timeout=180,
+    )
+    try:
+        data = response.json()
+    except ValueError:
+        data = {"raw": response.text}
+    return response.status_code, data
+
+
+def extract_generated_image_url(data):
+    if not isinstance(data, dict):
+        return ""
+    items = data.get("data")
+    if isinstance(items, list) and items and isinstance(items[0], dict):
+        url = items[0].get("url")
+        if url:
+            return str(url)
+        encoded = items[0].get("b64_json")
+        if encoded:
+            return f"data:image/png;base64,{encoded}"
+    return str(data.get("url") or data.get("image_url") or "")
 
 
 def extract_assistant_content(data):
@@ -477,14 +655,14 @@ def extract_assistant_content(data):
         if isinstance(first, dict):
             message = first.get("message")
             if isinstance(message, dict):
-                return str(message.get("content") or "").strip()
+                return repair_mojibake(str(message.get("content") or "").strip())
     for key in ("content", "text", "answer", "response"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            return repair_mojibake(value.strip())
     raw = data.get("raw")
     if isinstance(raw, str) and raw.strip():
-        return raw.strip()
+            return repair_mojibake(raw.strip())
     return ""
 
 
@@ -547,7 +725,7 @@ def require_auth():
 @app.get("/api/auth/status")
 def auth_status():
     token = get_session_token()
-    return jsonify({"authenticated": is_valid_session(token)})
+    return jsonify({"authenticated": is_valid_session(token), "username": get_current_username()})
 
 
 @app.post("/api/auth/login")
@@ -557,10 +735,11 @@ def auth_login():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return json_error("Invalid JSON body", 400)
-    pin = str(payload.get("pin") or "")
-    if not verify_pin(pin):
-        return json_error("Invalid PIN", 401)
-    token = issue_session_token()
+    username = str(payload.get("username") or "")
+    password = str(payload.get("password") or "")
+    if not verify_credentials(username, password):
+        return json_error("Invalid credentials", 401)
+    token = issue_session_token(username.strip().lower())
     response = jsonify({"ok": True})
     response.set_cookie(
         SESSION_COOKIE_NAME,
@@ -589,6 +768,38 @@ def auth_logout():
 
 @app.get("/")
 def root():
+    return send_from_directory(FRONTEND_DIR, "index.html")
+
+
+@app.get("/chat")
+@app.get("/chat/<path:_chat_path>")
+def chat_page(_chat_path=None):
+    if not is_valid_session(get_session_token()):
+        return redirect("/")
+    if _chat_path and _chat_path.endswith("/photo.jpg"):
+        chat_segment = _chat_path.rsplit("/", 1)[0]
+        conversation_id = chat_segment.strip()
+        conversation = next(
+            (item for item in load_store().get("conversations", []) if "".join(char for char in item["id"] if char.isdigit()) == conversation_id),
+            None,
+        )
+        if conversation is None:
+            return json_error("Conversation not found", 404)
+        image_url = next(
+            (message.get("imageUrl") for message in reversed(conversation.get("messages") or []) if message.get("imageUrl")),
+            "",
+        )
+        if not image_url:
+            return json_error("Image not found", 404)
+        if image_url.startswith(("https://", "http://")):
+            return redirect(image_url)
+        if image_url.startswith("data:image/") and "," in image_url:
+            header, encoded = image_url.split(",", 1)
+            try:
+                return Response(base64.b64decode(encoded), mimetype=header.split(";", 1)[0].split(":", 1)[1])
+            except (ValueError, IndexError):
+                return json_error("Invalid image data", 500)
+        return json_error("Image not found", 404)
     return send_from_directory(FRONTEND_DIR, "index.html")
 
 
@@ -826,11 +1037,18 @@ def post_message(conversation_id):
     if not isinstance(payload, dict):
         return json_error("Invalid JSON body", 400)
     content = str(payload.get("content") or "").strip()
-    if not content:
-        return json_error("content is required", 400)
+    image = payload.get("image")
+    if image is not None:
+        image = str(image)
+    if not content and not image:
+        return json_error("content or image is required", 400)
+    if image and (not image.startswith("data:image/") or len(image) > 7_000_000):
+        return json_error("Invalid image payload", 400)
     model = str(payload.get("model") or "").strip()
     if model not in SUPPORTED_CHAT_MODELS:
         return json_error("Invalid model", 400, availableModels=sorted(SUPPORTED_CHAT_MODELS))
+    if image and model != IMAGE_INPUT_MODEL:
+        return json_error("Image input is only available with Sol", 400)
     conversation_missing = False
     upstream_messages = None
 
@@ -841,12 +1059,15 @@ def post_message(conversation_id):
         if conversation is None:
             conversation_missing = True
             return
-        conversation["messages"].append({"role": "user", "content": content})
+        user_message = {"role": "user", "content": content}
+        if image:
+            user_message["image"] = image
+        conversation["messages"].append(user_message)
         conversation["updatedAt"] = now_ts()
         state["activeConversationId"] = conversation["id"]
         upstream_messages = [
             {"role": "system", "content": build_system_prompt(state["profile"])},
-            *conversation["messages"],
+            *(upstream_message(message) for message in conversation["messages"]),
         ]
         sort_conversations(state)
 
@@ -855,8 +1076,21 @@ def post_message(conversation_id):
         return json_error("Conversation not found", 404)
 
     try:
-        status_code, data = request_upstream_chat(upstream_messages, model=model)
-        assistant_content = extract_assistant_content(data)
+        if wants_image_generation(content):
+            provider = provider_for_model(model)
+            image_prompt = generate_image_prompt(content, model)
+            status_code, data = request_upstream_image(image_prompt, IMAGE_GENERATION_MODELS[provider])
+            image_url = extract_generated_image_url(data)
+            assistant_content = ""
+            if status_code < 400 and image_url:
+                assistant_content = "تصویر آماده شد."
+            elif status_code < 400:
+                assistant_content = "تصویر تولید شد، اما نشانی فایل در پاسخ سرویس موجود نبود."
+            assistant_message = {"role": "assistant", "content": assistant_content, **({"imageUrl": image_url} if image_url else {})}
+        else:
+            status_code, data = request_upstream_chat(upstream_messages, model=model)
+            assistant_content = extract_assistant_content(data)
+            assistant_message = {"role": "assistant", "content": assistant_content}
         if status_code >= 400:
             assistant_content = (
                 f"خطا در دریافت پاسخ از سرویس مدل.\n\n"
@@ -864,7 +1098,7 @@ def post_message(conversation_id):
             )
         if not assistant_content:
             assistant_content = "پاسخی دریافت نشد."
-        assistant_message = {"role": "assistant", "content": assistant_content}
+        assistant_message["content"] = assistant_content
 
         def append_assistant_message(state):
             conversation = get_conversation(state, conversation_id)
@@ -923,6 +1157,122 @@ def post_message(conversation_id):
             ),
             502,
         )
+
+
+@app.post("/api/conversations/<conversation_id>/messages/stream")
+def stream_message(conversation_id):
+    if not request.is_json:
+        return json_error("Request must be JSON", 415)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return json_error("Invalid JSON body", 400)
+    content = str(payload.get("content") or "").strip()
+    image = str(payload.get("image") or "")
+    model = str(payload.get("model") or "").strip()
+    client_message_id = str(payload.get("clientMessageId") or "").strip()
+    if not content and not image:
+        return json_error("content or image is required", 400)
+    if model not in SUPPORTED_CHAT_MODELS:
+        return json_error("Invalid model", 400)
+    if image and model != IMAGE_INPUT_MODEL:
+        return json_error("Image input is only available with Sol", 400)
+    context_data = {"messages": None, "missing": False}
+
+    def append_user(state):
+        conversation = get_conversation(state, conversation_id)
+        if conversation is None:
+            context_data["missing"] = True
+            return
+        user_message = {"role": "user", "content": content, "_id": client_message_id or f"user_{now_ts()}_{secrets.token_hex(3)}"}
+        if image:
+            user_message["image"] = image
+        conversation["messages"].append(user_message)
+        conversation["updatedAt"] = now_ts()
+        state["activeConversationId"] = conversation["id"]
+        context_data["messages"] = [{"role": "system", "content": build_system_prompt(state["profile"])}, *(upstream_message(message) for message in conversation["messages"])]
+        context_data["userMessageId"] = user_message["_id"]
+        sort_conversations(state)
+
+    update_store(append_user)
+    if context_data["missing"]:
+        return json_error("Conversation not found", 404)
+
+    def sse(event, data):
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    @stream_with_context
+    def generate():
+        full_content = ""
+        image_url = ""
+        try:
+            if wants_image_generation(content):
+                image_prompt = generate_image_prompt(content, model)
+                status, data = request_upstream_image(image_prompt, IMAGE_GENERATION_MODELS[provider_for_model(model)])
+                image_url = extract_generated_image_url(data)
+                full_content = "تصویر آماده شد." if status < 400 and image_url else "تصویر تولید نشد."
+                yield sse("delta", {"content": full_content, "imageUrl": image_url})
+            else:
+                response = requests.post(
+                    GAPGPT_API_URL,
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {GAPGPT_API_KEY}"},
+                    json={"model": model, "messages": context_data["messages"], "stream": True},
+                    timeout=120,
+                    stream=True,
+                )
+                response.encoding = "utf-8"
+                if response.status_code >= 400:
+                    try:
+                        details = response.json()
+                    except ValueError:
+                        details = response.text
+                    full_content = f"خطا در دریافت پاسخ از سرویس مدل.\n\nStatus: {response.status_code}\nDetails: {details}"
+                    yield sse("delta", {"content": full_content})
+                else:
+                    for line in response.iter_lines(decode_unicode=True):
+                        if not line or not line.startswith("data:"):
+                            continue
+                        raw = line[5:].strip()
+                        if raw == "[DONE]":
+                            break
+                        try:
+                            delta = extract_stream_delta(json.loads(raw))
+                        except json.JSONDecodeError:
+                            delta = ""
+                        if delta:
+                            full_content += delta
+                            yield sse("delta", {"content": delta})
+                    if not full_content:
+                        status, fallback = request_upstream_chat(context_data["messages"], model)
+                        full_content = extract_assistant_content(fallback) or "پاسخی دریافت نشد."
+                        yield sse("delta", {"content": full_content})
+            assistant_message = {
+                "role": "assistant",
+                "content": full_content or "پاسخی دریافت نشد.",
+                "_id": f"assistant_{now_ts()}_{secrets.token_hex(3)}",
+                "_parentId": context_data.get("userMessageId", ""),
+            }
+            if image_url:
+                assistant_message["imageUrl"] = image_url
+
+            def append_assistant(state):
+                conversation = get_conversation(state, conversation_id)
+                if conversation is None:
+                    return None
+                conversation["messages"].append(assistant_message)
+                conversation["updatedAt"] = now_ts()
+                if len(conversation["messages"]) == 2:
+                    title = generate_conversation_title(content)
+                    if title and len(title) <= 30:
+                        conversation["title"] = title
+                sort_conversations(state)
+                return conversation
+
+            state, conversation = update_store(append_assistant)
+            yield sse("done", {"conversation": serialize_conversation(conversation), "assistantMessage": assistant_message})
+        except requests.RequestException as exc:
+            yield sse("error", {"message": str(exc) or "خطا در دریافت پاسخ"})
+
+    return Response(generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/chat")
