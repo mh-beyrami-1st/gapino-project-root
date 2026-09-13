@@ -748,7 +748,7 @@ img, svg {
   position: absolute;
   right: 0;
   left: 0;
-  bottom: 0;
+  bottom: env(safe-area-inset-bottom);
   width: 100%;
   max-width: var(--app-max-width);
   margin: 0 auto;
