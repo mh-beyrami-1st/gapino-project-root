@@ -928,11 +928,11 @@ button:disabled {
   max-width: var(--app-max-width);
   margin: 0 auto;
   padding: 12px clamp(16px, 4vw, 56px) max(12px, env(safe-area-inset-bottom));
-  background: var(--composer-bg);
+  background: transparent;
   z-index: 18;
 }
 
-/* fade نرم فقط بالای composer (از رنگ composer به transparent) */
+/* fade نرم از --bg-color به transparent فقط بالای composer */
 .composer::before {
   content: "";
   position: absolute;
@@ -940,8 +940,26 @@ button:disabled {
   right: 0;
   top: -28px;
   height: 28px;
-  background: linear-gradient(to top, var(--composer-bg), transparent);
+  background: linear-gradient(to top, var(--bg-color), transparent);
   pointer-events: none;
+}
+
+/* ناحیه‌ی padding-bottom (safe-area) با --bg-color پر می‌شه تا هیچ نوار روشن‌تری دیده نشه */
+.composer::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: max(12px, env(safe-area-inset-bottom));
+  background: var(--bg-color);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.composer-inner {
+  position: relative;
+  z-index: 1;
 }
 
 :root.standalone .composer {
