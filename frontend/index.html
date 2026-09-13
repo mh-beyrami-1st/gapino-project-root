@@ -7,6 +7,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Gapino" />
   <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/png" href="/logo.png" />
+  <link rel="apple-touch-icon" href="/logo.png" />
   <meta name="color-scheme" content="light dark" />
   <title>Gapino - AI Chat</title>
   <script src="/debug.js" defer></script>
@@ -21,6 +23,10 @@
 <body>
   <div id="pinGate" class="pin-gate" aria-hidden="false">
     <form id="pinForm" class="pin-card" autocomplete="on">
+      <div class="pin-logo-wrap" aria-hidden="true">
+        <span class="pin-logo-glow"></span>
+        <img src="/logo.png" alt="Gapino" class="pin-logo" />
+      </div>
       <h1 class="pin-title">گپینو</h1>
       <p class="pin-subtitle">برای ورود، نام کاربری و رمز عبور را وارد کنید</p>
       <input
