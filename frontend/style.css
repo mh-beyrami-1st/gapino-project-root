@@ -149,7 +149,7 @@
 html {
   font-size: var(--font-base);
   line-height: var(--line-height-base);
-  min-height: 100%;
+  height: 100%;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -159,7 +159,8 @@ body {
   color: var(--text-color);
   background-color: var(--bg-color);
   line-height: var(--line-height-base);
-  min-height: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 button, input, textarea {
   font: inherit;
@@ -172,7 +173,8 @@ img, svg {
   display: block;
 }
 .app {
-  position: relative;
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
   width: 100%;
@@ -180,6 +182,7 @@ img, svg {
   height: 100dvh;
   max-width: var(--app-max-width);
   margin: 0 auto;
+  overscroll-behavior: none;
   overflow: hidden;
   background: var(--app-bg-color);
 }
