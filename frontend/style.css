@@ -878,7 +878,7 @@ button:disabled {
   width: 100%;
   max-width: var(--app-max-width);
   margin: 0 auto;
-  padding: 12px clamp(16px, 4vw, 56px) 0;
+  padding: 12px clamp(16px, 4vw, 56px) 12px;
   background: transparent;
   z-index: 18;
 }
