@@ -578,7 +578,15 @@ function autoResizeTextarea() {
   userInputEl.style.height = "auto";
   userInputEl.style.height = `${userInputEl.scrollHeight}px`;
 }
-function scrollToBottom() { requestAnimationFrame(() => { if (chatMainEl) chatMainEl.scrollTop = chatMainEl.scrollHeight; }); }
+function scrollToBottom() {
+  if (!chatMainEl) return;
+  const scroll = () => { chatMainEl.scrollTop = chatMainEl.scrollHeight; };
+  scroll();
+  requestAnimationFrame(() => {
+    scroll();
+    requestAnimationFrame(scroll);
+  });
+}
 function escapeHtml(value) {
   return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
@@ -1304,6 +1312,7 @@ async function initializeState() {
   renderActiveChat();
   if (activeChatId) syncChatUrl(getActiveChat(), true);
   autoResizeTextarea();
+  scrollToBottom();
 }
 
 /* ----------------------------------------------------------------------- */

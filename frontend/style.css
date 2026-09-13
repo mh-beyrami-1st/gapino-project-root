@@ -464,6 +464,9 @@ img, svg {
   opacity: 1;
 }
 .chat-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
   flex: 1;
   min-height: 0;
   margin-top: calc(56px + env(safe-area-inset-top));
