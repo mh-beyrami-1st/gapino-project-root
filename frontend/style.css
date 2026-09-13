@@ -755,7 +755,10 @@ img, svg {
   z-index: 18;
 }
 :root.standalone .composer {
-  position: absolute;
+  position: fixed;
+  /* iOS can report a shorter dynamic viewport for installed PWAs. Keep the
+     chat layout on that viewport, but move only the composer to its real end. */
+  bottom: calc(100dvh - 100lvh);
   padding-bottom: 16px;
 }
 .image-preview {
