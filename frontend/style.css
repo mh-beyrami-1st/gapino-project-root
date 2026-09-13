@@ -182,7 +182,6 @@ img, svg {
   width: 100%;
   height: 100vh;
   height: 100dvh;
-  height: 100lvh;
   max-width: var(--app-max-width);
   margin: 0 auto;
   overscroll-behavior: none;
@@ -469,7 +468,6 @@ img, svg {
 .chat-main {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
   flex: 1;
   min-height: 0;
   margin-top: calc(56px + env(safe-area-inset-top));
@@ -752,9 +750,13 @@ img, svg {
   width: 100%;
   max-width: var(--app-max-width);
   margin: 0 auto;
-  padding: 12px clamp(16px, 4vw, 56px) 16px;
+  padding: 12px clamp(16px, 4vw, 56px) calc(16px + env(safe-area-inset-bottom));
   background: linear-gradient(to top, var(--composer-gradient-start) 72%, var(--composer-gradient-end));
   z-index: 18;
+}
+:root.standalone .composer {
+  position: absolute;
+  padding-bottom: 16px;
 }
 .image-preview {
   position: absolute;

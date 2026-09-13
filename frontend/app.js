@@ -51,6 +51,12 @@ const messagesSectionEl = document.getElementById("messagesSection");
 const chatMainEl = document.getElementById("chatMain");
 const userInputEl = document.getElementById("userInput");
 const sendBtnEl = document.getElementById("sendBtn");
+
+function applyDisplayMode() {
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  document.documentElement.classList.toggle("standalone", isStandalone);
+}
+applyDisplayMode();
 const themeToggleEl = document.getElementById("themeToggle");
 const menuBtnEl = document.getElementById("menuBtn");
 const drawerEl = document.getElementById("drawer");
