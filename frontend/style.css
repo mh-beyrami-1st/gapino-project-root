@@ -182,6 +182,7 @@ img, svg {
   width: 100%;
   height: 100vh;
   height: 100dvh;
+  height: 100lvh;
   max-width: var(--app-max-width);
   margin: 0 auto;
   overscroll-behavior: none;
@@ -744,7 +745,7 @@ img, svg {
   cursor: not-allowed;
 }
 .composer {
-  position: fixed;
+  position: absolute;
   right: 0;
   left: 0;
   bottom: 0;
@@ -1403,7 +1404,7 @@ button:disabled {
   text-align: start;
   direction: ltr;
 }
-.password-input { letter-spacing: .08em; }
+.password-input { letter-spacing: 0; }
 .pin-input:focus {
   border-color: var(--primary-btn-bg);
 }

@@ -1,7 +1,6 @@
 import hmac
 import json
 import os
-import secrets
 import sqlite3
 import time
 import base64
@@ -11,6 +10,7 @@ from threading import RLock
 import requests
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory, stream_with_context
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -40,6 +40,10 @@ IMAGE_GENERATION_API_URL = os.getenv("IMAGE_GENERATION_API_URL") or (GAPGPT_API_
 PROMPT_MODEL = "gemini-3.1-flash-lite"
 SESSION_TTL = 60 * 60 * 24 * 30  # 30 days
 SESSION_COOKIE_NAME = "gapino_session"
+SESSION_SERIALIZER = URLSafeTimedSerializer(
+    os.getenv("SESSION_SECRET") or GAPGPT_API_KEY,
+    salt="gapino-session",
+)
 SUPPORTED_CHAT_MODELS = frozenset(
     {
         "gpt-5.6-sol",
@@ -189,7 +193,7 @@ def verify_credentials(username: str, password: str) -> bool:
 
 
 def issue_session_token(username: str) -> str:
-    token = secrets.token_urlsafe(32)
+    token = SESSION_SERIALIZER.dumps({"username": username})
     now = now_ts()
     with DATABASE_LOCK:
         with database_connection() as connection:
@@ -205,6 +209,11 @@ def issue_session_token(username: str) -> str:
 def is_valid_session(token: str) -> bool:
     if not token:
         return False
+    try:
+        payload = SESSION_SERIALIZER.loads(token, max_age=SESSION_TTL)
+        return str(payload.get("username") or "").lower() in DEFAULT_USERS
+    except (BadSignature, SignatureExpired, AttributeError):
+        pass
     now = now_ts()
     with DATABASE_LOCK:
         with database_connection() as connection:
@@ -231,6 +240,12 @@ def get_current_username() -> str:
     token = get_session_token()
     if not token:
         return ""
+    try:
+        payload = SESSION_SERIALIZER.loads(token, max_age=SESSION_TTL)
+        username = str(payload.get("username") or "").lower()
+        return username if username in DEFAULT_USERS else ""
+    except (BadSignature, SignatureExpired, AttributeError):
+        pass
     with DATABASE_LOCK:
         with database_connection() as connection:
             row = connection.execute(
