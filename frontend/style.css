@@ -745,14 +745,14 @@ img, svg {
   cursor: not-allowed;
 }
 .composer {
-  position: absolute;
+  position: fixed;
   right: 0;
   left: 0;
-  bottom: env(safe-area-inset-bottom);
+  bottom: 0;
   width: 100%;
   max-width: var(--app-max-width);
   margin: 0 auto;
-  padding: 12px clamp(16px, 4vw, 56px) calc(16px + env(safe-area-inset-bottom));
+  padding: 12px clamp(16px, 4vw, 56px) 16px;
   background: linear-gradient(to top, var(--composer-gradient-start) 72%, var(--composer-gradient-end));
   z-index: 18;
 }
