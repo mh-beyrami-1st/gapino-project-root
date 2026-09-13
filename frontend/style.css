@@ -158,6 +158,8 @@ html, body {
   min-height: 100dvh;
   background-color: var(--bg-color);
   overscroll-behavior: none;
+  margin: 0;
+  padding: 0;
 }
 body {
   font-family: "Estedad", system-ui, -apple-system, sans-serif;
@@ -496,7 +498,7 @@ button:disabled {
   flex: 1;
   min-height: 0;
   margin-top: calc(56px + env(safe-area-inset-top));
-  margin-bottom: calc(80px + env(safe-area-inset-bottom));
+  margin-bottom: 80px;
   padding: 24px clamp(16px, 4vw, 56px) 20px;
   overflow-y: auto;
   scroll-behavior: smooth;
@@ -876,7 +878,7 @@ button:disabled {
   width: 100%;
   max-width: var(--app-max-width);
   margin: 0 auto;
-  padding: 12px clamp(16px, 4vw, 56px) max(12px, env(safe-area-inset-bottom));
+  padding: 12px clamp(16px, 4vw, 56px) 0;
   background: transparent;
   z-index: 18;
 }
@@ -907,6 +909,7 @@ button:disabled {
 :root.standalone .composer {
   position: fixed;
   bottom: 0;
+  padding-bottom: 0;
 }
 .image-preview {
   position: absolute;
@@ -1276,7 +1279,7 @@ button:disabled {
 }
 .drawer-footer {
   flex: 0 0 auto;
-  padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+  padding: 10px 12px 12px;
   border-top: 1px solid var(--drawer-border-color);
 }
 .drawer-logout-btn {
