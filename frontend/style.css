@@ -932,6 +932,7 @@ button:disabled {
   z-index: 18;
 }
 
+/* fade نرم بالای composer از رنگ پس‌زمینه به transparent */
 .composer::before {
   content: "";
   position: absolute;
@@ -947,12 +948,54 @@ button:disabled {
   position: relative;
   z-index: 1;
   margin-bottom: max(8px, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 58px;
+  padding: 9px 10px 9px 16px;
+  border: 1px solid var(--composer-border);
+  border-radius: 22px;
+  background: var(--composer-bg);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .06);
+  direction: rtl;
 }
 
 :root.standalone .composer {
   position: fixed;
   bottom: 0;
   padding-bottom: 0;
+}
+
+.composer-watermark {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  z-index: 1;
+  transform: translateY(-50%);
+  color: var(--placeholder-color);
+  font-size: var(--font-message);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.composer-input {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-width: 0;
+  min-height: 26px;
+  max-height: 160px;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  color: var(--text-color);
+  font-size: var(--font-message);
+  line-height: 1.55;
+  overflow-y: auto;
+}
+.composer-input:not(:placeholder-shown) ~ .composer-watermark,
+.composer-input:focus ~ .composer-watermark {
+  opacity: 0;
 }
 
 /* image preview */
@@ -1001,51 +1044,7 @@ button:disabled {
   height: 14px;
 }
 
-/* composer inner */
-.composer-inner {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 58px;
-  padding: 9px 10px 9px 16px;
-  border: 1px solid var(--composer-border);
-  border-radius: 22px;
-  background: var(--composer-bg);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .06);
-  direction: rtl;
-}
-.composer-watermark {
-  position: absolute;
-  top: 50%;
-  right: 14px;
-  z-index: 1;
-  transform: translateY(-50%);
-  color: var(--placeholder-color);
-  font-size: var(--font-message);
-  white-space: nowrap;
-  pointer-events: none;
-}
-.composer-input {
-  position: relative;
-  z-index: 2;
-  flex: 1;
-  min-width: 0;
-  min-height: 26px;
-  max-height: 160px;
-  border: 0;
-  outline: none;
-  resize: none;
-  background: transparent;
-  color: var(--text-color);
-  font-size: var(--font-message);
-  line-height: 1.55;
-  overflow-y: auto;
-}
-.composer-input:not(:placeholder-shown) ~ .composer-watermark,
-.composer-input:focus ~ .composer-watermark {
-  opacity: 0;
-}
+/* send / more / attach buttons */
 .send-btn {
   display: inline-flex;
   align-items: center;
@@ -1269,8 +1268,11 @@ button:disabled {
 /* ----------------------------------------------------------------------- */
 .overlay {
   position: fixed;
-  inset: 0;
-  z-index: 25;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 50;
   background: rgba(0, 0, 0, 0.34);
   opacity: 0;
   pointer-events: none;
@@ -1284,12 +1286,11 @@ button:disabled {
   position: fixed;
   top: 0;
   right: 0;
-  z-index: 30;
+  bottom: 0;
+  z-index: 55;
   display: flex;
   flex-direction: column;
   width: min(86vw, 320px);
-  height: 100vh;
-  height: 100dvh;
   min-height: 0;
   background: var(--drawer-bg-color);
   border-left: 1px solid var(--drawer-border-color);
@@ -1533,7 +1534,7 @@ button:disabled {
 .modal {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 60;
   display: none;
   align-items: center;
   justify-content: center;
