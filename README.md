@@ -1,21 +1,23 @@
 gapino-project-root/
-├── .example.env
 ├── .env
+├── .example.env
 ├── .gitignore
-├── pyproject.toml
+├── README.md
+├── package.json
+├── package-lock.json
 ├── requirements.txt
+├── vercel.json
 ├── backend/
 │   ├── data/
-│   │   └── database.db
-│   ├── server.py
-│   └── __init__.py
-└── frontend/
-    ├── fonts/
-    │   ├── Estedad-Bold.woff2
-    │   ├── Estedad-Medium.woff2
-    │   └── Estedad-Regular.woff2
-    ├── app.js
-    ├── debug.js
-    ├── index.html
-    ├── manifest.json
-    └── style.css
+│   ├── __init__.py
+│   └── server.py
+├── frontend/
+│   ├── fonts/
+│   ├── app.js
+│   ├── debug.js
+│   ├── index.html
+│   ├── logo.png
+│   ├── manifest.json
+│   └── style.css
+└── scripts/
+    └── copy-vendor.js

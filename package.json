@@ -1,0 +1,17 @@
+{
+  "scripts": {
+    "build:vendor": "node scripts/copy-vendor.js"
+  },
+  "dependencies": {
+    "@highlightjs/cdn-assets": "^11.11.1",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.16.11",
+    "markdown-it": "^14.1.0",
+    "markdown-it-katex": "^2.0.3",
+    "markdown-it-task-lists": "^2.1.1",
+    "markdown-it-texmath": "^1.0.0"
+  },
+  "devDependencies": {
+    "browserify": "^17.0.1"
+  }
+}
