@@ -360,6 +360,7 @@ function normalizeConversation(conversation) {
     id: String(conversation.id || `${nowTs()}`),
     title: String(conversation.title || "گفت‌وگوی جدید"),
     modelId: normalizeModelId(conversation.modelId),
+    pinned: Boolean(conversation.pinned),
     messages,
     createdAt: toNumber(conversation.createdAt),
     updatedAt: toNumber(conversation.updatedAt),
@@ -371,6 +372,7 @@ function normalizeConversationSummary(conversation) {
     id: String(conversation.id || `${nowTs()}`),
     title: String(conversation.title || "گفت‌وگوی جدید"),
     modelId: normalizeModelId(conversation.modelId),
+    pinned: Boolean(conversation.pinned),
     messages: [],
     createdAt: toNumber(conversation.createdAt),
     updatedAt: toNumber(conversation.updatedAt),
@@ -481,6 +483,7 @@ function upsertConversation(conversation, preserveExistingMessages = true) {
       ...existing,
       ...normalized,
       modelId: normalized.modelId || existing.modelId || DEFAULT_MODEL_ID,
+      pinned: normalized.pinned,
       messages: normalized.messages.length > 0 || !preserveExistingMessages ? normalized.messages : existing.messages || [],
     };
   }
@@ -571,6 +574,27 @@ async function updateChatTitle(chatId, title) {
   renderActiveChat();
   syncChatUrl(getActiveChat(), true);
   showToast("عنوان گفت‌وگو ویرایش شد");
+}
+async function updateChatPinned(chatId, pinned) {
+  const id = String(chatId);
+  const chat = chats.find((item) => item.id === id);
+  if (!chat) return;
+  chat.pinned = Boolean(pinned);
+  renderChatList();
+  try {
+    const data = await apiRequest(`/api/conversations/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ pinned: Boolean(pinned) }),
+    });
+    upsertConversation(data.conversation || data, false);
+    renderChatList();
+    showToast(pinned ? "گفت‌وگو پین شد" : "پین برداشته شد");
+  } catch (error) {
+    console.error("Failed to update pinned:", error);
+    chat.pinned = !pinned;
+    renderChatList();
+    showToast("خطا در تغییر وضعیت پین");
+  }
 }
 function updateChatTitleFromFirstMessage(chat) {
   if (!chat || chat.title !== "گفت‌وگوی جدید") return;
@@ -840,6 +864,13 @@ function createIconButton(label, svgPath) {
   button.innerHTML = `<svg viewBox="0 0 24 24" class="action-icon" aria-hidden="true"><path fill="currentColor" d="${svgPath}"></path></svg>`;
   return button;
 }
+function createPinIcon() {
+  const span = document.createElement("span");
+  span.className = "chat-item-pin-icon";
+  span.setAttribute("aria-hidden", "true");
+  span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76V6h6v4.76a2 2 0 0 0 .55 1.4L17 14H7l1.45-1.84A2 2 0 0 0 9 10.76Z"/></svg>`;
+  return span;
+}
 function renderUserMessage(msg) {
   if (!messagesSectionEl) return;
   const wrapper = document.createElement("div");
@@ -1077,26 +1108,79 @@ function renderActiveChat() {
 function renderChatList() {
   if (!chatListEl) return;
   chatListEl.innerHTML = "";
-  if (chats.length === 0) {
-    const empty = document.createElement("li");
-    empty.className = "chat-list-empty";
-    empty.textContent = "گفت‌وگویی یافت نشد";
-    chatListEl.appendChild(empty);
+  const pinned = chats.filter((chat) => chat.pinned);
+  const rest = chats.filter((chat) => !chat.pinned);
+
+  const buildSection = (title, list) => {
+    const section = document.createElement("li");
+    section.className = "chat-group";
+    const header = document.createElement("div");
+    header.className = "chat-group-header";
+    const chevron = document.createElement("span");
+    chevron.className = "chat-group-chevron";
+    chevron.setAttribute("aria-hidden", "true");
+    chevron.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>`;
+    const label = document.createElement("span");
+    label.className = "chat-group-label";
+    label.textContent = title;
+    header.appendChild(label);
+    header.appendChild(chevron);
+    const body = document.createElement("ul");
+    body.className = "chat-group-body";
+    let collapsed = false;
+    header.addEventListener("click", () => {
+      collapsed = !collapsed;
+      body.style.display = collapsed ? "none" : "";
+      section.classList.toggle("collapsed", collapsed);
+    });
+    if (list.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "chat-list-empty";
+      empty.textContent = "موردی یافت نشد";
+      body.appendChild(empty);
+    } else {
+      for (const chat of list) {
+        body.appendChild(createChatItem(chat));
+      }
+    }
+    section.appendChild(header);
+    section.appendChild(body);
+    return section;
+  };
+
+  if (pinned.length === 0) {
+    if (chats.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "chat-list-empty";
+      empty.textContent = "گفت‌وگویی یافت نشد";
+      chatListEl.appendChild(empty);
+      return;
+    }
+    for (const chat of rest) {
+      chatListEl.appendChild(createChatItem(chat));
+    }
     return;
   }
-  for (const chat of chats) {
-    chatListEl.appendChild(createChatItem(chat));
-  }
+
+  chatListEl.appendChild(buildSection("سنجاق‌شده‌ها", pinned));
+  chatListEl.appendChild(buildSection("همهٔ گفت‌وگوها", rest));
 }
 function createChatItem(chat) {
-  const item = document.createElement("div");
+  const item = document.createElement("li");
   item.className = "chat-item";
   if (chat.id === activeChatId) item.classList.add("active");
+  if (chat.pinned) item.classList.add("pinned");
+
   const chatButton = document.createElement("button");
   chatButton.type = "button";
   chatButton.className = "chat-item-btn";
   chatButton.textContent = chat.title || "گفت‌وگوی جدید";
   chatButton.addEventListener("click", () => { void setActiveChat(chat.id); });
+
+  if (chat.pinned) {
+    item.appendChild(createPinIcon());
+  }
+
   const dropdownContainer = document.createElement("div");
   dropdownContainer.className = "chat-item-actions-dropdown";
   const toggleBtn = document.createElement("button");
@@ -1104,6 +1188,18 @@ function createChatItem(chat) {
   toggleBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>`;
   const menu = document.createElement("div");
   menu.className = "dropdown-menu";
+
+  const pinItem = document.createElement("button");
+  pinItem.className = "dropdown-item";
+  pinItem.innerHTML = chat.pinned
+    ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76V6h6v4.76a2 2 0 0 0 .55 1.4L17 14H7l1.45-1.84A2 2 0 0 0 9 10.76Z"/><line x1="4" y1="4" x2="20" y2="20"/></svg><span>برداشتن پین</span>`
+    : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76V6h6v4.76a2 2 0 0 0 .55 1.4L17 14H7l1.45-1.84A2 2 0 0 0 9 10.76Z"/></svg><span>پین کردن</span>`;
+  pinItem.addEventListener("click", (event) => {
+    event.stopPropagation();
+    menu.classList.remove("show");
+    void updateChatPinned(chat.id, !chat.pinned);
+  });
+
   const renameItem = document.createElement("button");
   renameItem.className = "dropdown-item";
   renameItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg><span>ویرایش عنوان</span>`;
@@ -1120,6 +1216,7 @@ function createChatItem(chat) {
     item.appendChild(input);
     requestAnimationFrame(() => { input.focus(); input.select(); });
   });
+
   const deleteItem = document.createElement("button");
   deleteItem.className = "dropdown-item danger";
   deleteItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg><span>حذف</span>`;
@@ -1128,6 +1225,7 @@ function createChatItem(chat) {
     menu.classList.remove("show");
     showDeleteConfirmModal(chat.id);
   });
+
   const toggleMenu = (event) => {
     event.stopPropagation();
     const isOpen = menu.classList.contains("show");
@@ -1151,6 +1249,7 @@ function createChatItem(chat) {
     }
   });
   toggleBtn.addEventListener("click", toggleMenu);
+  menu.appendChild(pinItem);
   menu.appendChild(renameItem);
   const divider = document.createElement("hr");
   divider.style.cssText = "border: 0; border-top: 1px solid var(--border-color); margin: 4px 0;";

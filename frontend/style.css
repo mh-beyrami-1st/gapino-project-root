@@ -1379,19 +1379,65 @@ button:disabled {
 .chat-list {
   display: flex;
   flex-direction: column;
+  gap: 12px;
+  list-style: none;
+}
+.chat-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+}
+.chat-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 6px;
+  padding: 4px 6px 6px;
+  color: var(--placeholder-color);
+  font-size: var(--font-small);
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.chat-group-label {
+  text-align: right;
+}
+.chat-group-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  transition: transform 0.2s ease;
+}
+.chat-group-chevron svg {
+  width: 14px;
+  height: 14px;
+}
+.chat-group:not(.collapsed) .chat-group-chevron {
+  transform: rotate(180deg);
+}
+.chat-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
 }
 .chat-list-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 140px;
-  padding: 20px 10px;
+  min-height: 60px;
+  padding: 12px 10px;
   color: var(--placeholder-color);
   font-size: var(--font-small);
   text-align: center;
+  list-style: none;
 }
 .chat-item {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1399,6 +1445,27 @@ button:disabled {
   border-radius: 12px;
   background: var(--chat-item-bg);
   color: var(--chat-item-text);
+}
+.chat-item.pinned {
+  padding-right: 34px;
+}
+.chat-item-pin-icon {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--primary-btn-bg);
+  opacity: 0.9;
+  pointer-events: none;
+}
+.chat-item-pin-icon svg {
+  width: 16px;
+  height: 16px;
 }
 .chat-item.active {
   outline: 1px solid rgba(127, 179, 255, 0.18);

@@ -154,6 +154,7 @@ def initialize_database():
                 owner_username TEXT NOT NULL DEFAULT 'admin',
                 title TEXT NOT NULL,
                 model_id TEXT,
+                pinned BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
@@ -203,6 +204,8 @@ def initialize_database():
                 cursor.execute("ALTER TABLE conversations ADD COLUMN owner_username TEXT NOT NULL DEFAULT 'admin'")
             if "model_id" not in conversation_columns:
                 cursor.execute("ALTER TABLE conversations ADD COLUMN model_id TEXT")
+            if "pinned" not in conversation_columns:
+                cursor.execute("ALTER TABLE conversations ADD COLUMN pinned BOOLEAN NOT NULL DEFAULT FALSE")
             if "username" not in session_columns:
                 cursor.execute("ALTER TABLE sessions ADD COLUMN username TEXT NOT NULL DEFAULT 'admin'")
             if "image" not in message_columns:
@@ -378,6 +381,7 @@ def normalize_state(state):
         if not title:
             title = DEFAULT_CONVERSATION_TITLE
         model_id = normalize_model_id(conversation.get("modelId") or conversation.get("model_id"))
+        pinned = bool(conversation.get("pinned", False))
         messages = conversation.get("messages")
         if not isinstance(messages, list):
             messages = []
@@ -401,6 +405,7 @@ def normalize_state(state):
                 "id": conversation_id,
                 "title": title,
                 "modelId": model_id,
+                "pinned": pinned,
                 "messages": clean_messages,
                 "createdAt": created_at,
                 "updatedAt": updated_at,
@@ -429,7 +434,7 @@ def _load_store_unlocked(owner_username="admin"):
     with database_connection() as connection:
         conversations = []
         conversation_rows = connection.execute(
-            "SELECT id, title, model_id, created_at, updated_at FROM conversations "
+            "SELECT id, title, model_id, pinned, created_at, updated_at FROM conversations "
             "WHERE owner_username = %s ORDER BY updated_at DESC, created_at DESC",
             (owner_username,),
         ).fetchall()
@@ -457,6 +462,7 @@ def _load_store_unlocked(owner_username="admin"):
                     "id": row["id"],
                     "title": row["title"],
                     "modelId": row["model_id"] or DEFAULT_MODEL_ID,
+                    "pinned": bool(row["pinned"]),
                     "messages": messages_by_session.get(row["id"], []),
                     "createdAt": row["created_at"],
                     "updatedAt": row["updated_at"],
@@ -498,11 +504,12 @@ def _save_store_unlocked(state, owner_username="admin"):
             for conversation in normalized["conversations"]:
                 connection.execute(
                     """
-                    INSERT INTO conversations (id, owner_username, title, model_id, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    INSERT INTO conversations (id, owner_username, title, model_id, pinned, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         title = EXCLUDED.title,
                         model_id = EXCLUDED.model_id,
+                        pinned = EXCLUDED.pinned,
                         updated_at = EXCLUDED.updated_at
                     """,
                     (
@@ -510,6 +517,7 @@ def _save_store_unlocked(state, owner_username="admin"):
                         owner_username,
                         conversation["title"],
                         conversation["modelId"],
+                        conversation["pinned"],
                         conversation["createdAt"],
                         conversation["updatedAt"],
                     ),
@@ -629,6 +637,7 @@ def conversation_summary(conversation):
         "id": conversation["id"],
         "title": conversation.get("title") or DEFAULT_CONVERSATION_TITLE,
         "modelId": conversation.get("modelId") or DEFAULT_MODEL_ID,
+        "pinned": bool(conversation.get("pinned", False)),
         "messageCount": len(messages),
         "createdAt": conversation.get("createdAt"),
         "updatedAt": conversation.get("updatedAt"),
@@ -641,6 +650,7 @@ def serialize_conversation(conversation):
         "id": conversation["id"],
         "title": conversation.get("title") or DEFAULT_CONVERSATION_TITLE,
         "modelId": conversation.get("modelId") or DEFAULT_MODEL_ID,
+        "pinned": bool(conversation.get("pinned", False)),
         "messages": conversation.get("messages") or [],
         "createdAt": conversation.get("createdAt"),
         "updatedAt": conversation.get("updatedAt"),
@@ -653,6 +663,7 @@ def create_conversation(state, title=None, model_id=None):
         "id": f"{timestamp}{secrets.randbelow(1_000_000):06d}",
         "title": str(title or DEFAULT_CONVERSATION_TITLE).strip() or DEFAULT_CONVERSATION_TITLE,
         "modelId": normalize_model_id(model_id),
+        "pinned": False,
         "messages": [],
         "createdAt": timestamp,
         "updatedAt": timestamp,
@@ -956,7 +967,6 @@ def get_state():
         }
     )
 
-
 @app.patch("/api/state")
 def patch_state():
     if not request.is_json:
@@ -1112,6 +1122,8 @@ def patch_conversation(conversation_id):
                 validation_error = ("Invalid model", 400)
                 return None
             conversation["modelId"] = model_id
+        if "pinned" in payload:
+            conversation["pinned"] = bool(payload.get("pinned"))
         if "messages" in payload:
             messages = payload.get("messages")
             if not isinstance(messages, list):
