@@ -1,5 +1,6 @@
 {
   "scripts": {
+    "build": "node scripts/copy-vendor.js",
     "build:vendor": "node scripts/copy-vendor.js"
   },
   "dependencies": {
