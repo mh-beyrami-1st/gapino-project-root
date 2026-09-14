@@ -611,8 +611,27 @@ function closeOverlayIfIdle() {
   const deleteConfirmOpen = document.getElementById("deleteConfirmModal") && document.getElementById("deleteConfirmModal").classList.contains("show");
   if (!drawerOpen && !profileOpen && !deleteConfirmOpen && overlayEl) overlayEl.classList.remove("show");
 }
-function openDrawer() { closeAllMenus(); if (drawerEl) drawerEl.classList.add("open"); openOverlay(); }
-function closeDrawer() { if (drawerEl) drawerEl.classList.remove("open"); closeOverlayIfIdle(); }
+function openDrawer() {
+  closeAllMenus();
+  if (drawerEl) drawerEl.classList.add("open");
+  openOverlay();
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (userInputEl) userInputEl.blur();
+    });
+  });
+}
+function closeDrawer() {
+  if (drawerEl) drawerEl.classList.remove("open");
+  closeOverlayIfIdle();
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (userInputEl && !isSending) {
+        try { userInputEl.focus({ preventScroll: true }); } catch { userInputEl.focus(); }
+      }
+    });
+  });
+}
 function openProfileModal() {
   closeAllMenus();
   const profile = getProfile();
@@ -1614,6 +1633,20 @@ window.addEventListener("popstate", async () => {
   const chatId = chatIdFromPath();
   if (chatId && chats.some((chat) => chat.id === chatId)) await setActiveChat(chatId);
 });
+
+if (window.visualViewport) {
+  const onViewportResize = () => {
+    document.documentElement.style.setProperty("--vvh", `${window.visualViewport.height}px`);
+    if (window.visualViewport.height >= window.innerHeight - 50) {
+      if (userInputEl && !isSending && document.activeElement === userInputEl) {
+        scrollToBottom();
+      }
+    }
+  };
+  window.visualViewport.addEventListener("resize", onViewportResize);
+  window.visualViewport.addEventListener("scroll", onViewportResize);
+  onViewportResize();
+}
 
 const deleteConfirmModalHTML = `
 <div id="deleteConfirmModal" class="modal" aria-hidden="true">
