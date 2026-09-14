@@ -25,6 +25,8 @@ DATABASE_LOCK = RLock()
 _DB_POOL = None
 _DB_POOL_LOCK = RLock()
 
+DEFAULT_MODEL_ID = "gpt-5.6-sol"
+
 
 def get_pool():
     global _DB_POOL
@@ -147,6 +149,7 @@ def initialize_database():
                 id TEXT PRIMARY KEY,
                 owner_username TEXT NOT NULL DEFAULT 'admin',
                 title TEXT NOT NULL,
+                model_id TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
@@ -194,6 +197,8 @@ def initialize_database():
             session_columns = columns_by_table.get("sessions", set())
             if "owner_username" not in conversation_columns:
                 cursor.execute("ALTER TABLE conversations ADD COLUMN owner_username TEXT NOT NULL DEFAULT 'admin'")
+            if "model_id" not in conversation_columns:
+                cursor.execute("ALTER TABLE conversations ADD COLUMN model_id TEXT")
             if "username" not in session_columns:
                 cursor.execute("ALTER TABLE sessions ADD COLUMN username TEXT NOT NULL DEFAULT 'admin'")
             if "image" not in message_columns:
@@ -236,6 +241,13 @@ def repair_mojibake(value):
     except (UnicodeEncodeError, UnicodeDecodeError):
         return value
     return repaired if any("\u0600" <= char <= "\u06ff" for char in repaired) else value
+
+
+def normalize_model_id(model_id):
+    model_id = str(model_id or "").strip()
+    if model_id not in SUPPORTED_CHAT_MODELS:
+        return DEFAULT_MODEL_ID
+    return model_id
 
 
 def verify_credentials(username, password):
@@ -361,6 +373,7 @@ def normalize_state(state):
         title = str(conversation.get("title") or DEFAULT_CONVERSATION_TITLE).strip()
         if not title:
             title = DEFAULT_CONVERSATION_TITLE
+        model_id = normalize_model_id(conversation.get("modelId") or conversation.get("model_id"))
         messages = conversation.get("messages")
         if not isinstance(messages, list):
             messages = []
@@ -383,6 +396,7 @@ def normalize_state(state):
             {
                 "id": conversation_id,
                 "title": title,
+                "modelId": model_id,
                 "messages": clean_messages,
                 "createdAt": created_at,
                 "updatedAt": updated_at,
@@ -411,7 +425,7 @@ def _load_store_unlocked(owner_username="admin"):
     with database_connection() as connection:
         conversations = []
         conversation_rows = connection.execute(
-            "SELECT id, title, created_at, updated_at FROM conversations "
+            "SELECT id, title, model_id, created_at, updated_at FROM conversations "
             "WHERE owner_username = %s ORDER BY updated_at DESC, created_at DESC",
             (owner_username,),
         ).fetchall()
@@ -438,6 +452,7 @@ def _load_store_unlocked(owner_username="admin"):
                 {
                     "id": row["id"],
                     "title": row["title"],
+                    "modelId": row["model_id"] or DEFAULT_MODEL_ID,
                     "messages": messages_by_session.get(row["id"], []),
                     "createdAt": row["created_at"],
                     "updatedAt": row["updated_at"],
@@ -479,16 +494,18 @@ def _save_store_unlocked(state, owner_username="admin"):
             for conversation in normalized["conversations"]:
                 connection.execute(
                     """
-                    INSERT INTO conversations (id, owner_username, title, created_at, updated_at)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO conversations (id, owner_username, title, model_id, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         title = EXCLUDED.title,
+                        model_id = EXCLUDED.model_id,
                         updated_at = EXCLUDED.updated_at
                     """,
                     (
                         conversation["id"],
                         owner_username,
                         conversation["title"],
+                        conversation["modelId"],
                         conversation["createdAt"],
                         conversation["updatedAt"],
                     ),
@@ -597,6 +614,7 @@ def conversation_summary(conversation):
     return {
         "id": conversation["id"],
         "title": conversation.get("title") or DEFAULT_CONVERSATION_TITLE,
+        "modelId": conversation.get("modelId") or DEFAULT_MODEL_ID,
         "messageCount": len(messages),
         "createdAt": conversation.get("createdAt"),
         "updatedAt": conversation.get("updatedAt"),
@@ -608,17 +626,19 @@ def serialize_conversation(conversation):
     return {
         "id": conversation["id"],
         "title": conversation.get("title") or DEFAULT_CONVERSATION_TITLE,
+        "modelId": conversation.get("modelId") or DEFAULT_MODEL_ID,
         "messages": conversation.get("messages") or [],
         "createdAt": conversation.get("createdAt"),
         "updatedAt": conversation.get("updatedAt"),
     }
 
 
-def create_conversation(state, title=None):
+def create_conversation(state, title=None, model_id=None):
     timestamp = now_ts()
     conversation = {
         "id": f"{timestamp}{secrets.randbelow(1_000_000):06d}",
         "title": str(title or DEFAULT_CONVERSATION_TITLE).strip() or DEFAULT_CONVERSATION_TITLE,
+        "modelId": normalize_model_id(model_id),
         "messages": [],
         "createdAt": timestamp,
         "updatedAt": timestamp,
@@ -1038,7 +1058,7 @@ def create_conversation_endpoint():
         payload = {}
 
     def mutate(state):
-        return create_conversation(state, payload.get("title"))
+        return create_conversation(state, payload.get("title"), payload.get("modelId"))
 
     state, created = update_store(mutate)
     conversation = get_conversation(state, created["id"])
@@ -1072,6 +1092,12 @@ def patch_conversation(conversation_id):
         if "title" in payload:
             title = str(payload.get("title") or "").strip()
             conversation["title"] = title or DEFAULT_CONVERSATION_TITLE
+        if "modelId" in payload:
+            model_id = str(payload.get("modelId") or "").strip()
+            if model_id not in SUPPORTED_CHAT_MODELS:
+                validation_error = ("Invalid model", 400)
+                return None
+            conversation["modelId"] = model_id
         if "messages" in payload:
             messages = payload.get("messages")
             if not isinstance(messages, list):
@@ -1280,6 +1306,8 @@ def stream_message(conversation_id):
             user_message["image"] = image
         conversation["messages"].append(user_message)
         conversation["updatedAt"] = now_ts()
+        if conversation.get("modelId") != model:
+            conversation["modelId"] = model
         state["activeConversationId"] = conversation["id"]
         context_data["messages"] = [{"role": "system", "content": build_system_prompt(state["profile"])}, *(upstream_message(message) for message in conversation["messages"])]
         context_data["userMessageId"] = user_message["_id"]

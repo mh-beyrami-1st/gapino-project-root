@@ -1,6 +1,5 @@
 const DEFAULT_PROFILE = { name: "", job: "", systemPrompt: "", responseStyle: "" };
 const DEFAULT_MODEL_ID = "gpt-5.6-sol";
-const MODEL_STORAGE_KEY = "gapino.selectedModel";
 const MODEL_PROVIDERS = [
   {
     id: "gpt",
@@ -96,7 +95,7 @@ let currentProfile = { ...DEFAULT_PROFILE };
 let currentTheme = "auto";
 let isSending = false;
 let pendingDeleteChatId = null;
-let selectedModelId = readStoredModel();
+let selectedModelId = DEFAULT_MODEL_ID;
 let appInitialized = false;
 let pendingImageDataUrl = "";
 
@@ -137,27 +136,25 @@ function showToast(message) {
     }, 280);
   }, 2200);
 }
-function readStoredModel() {
-  try {
-    const stored = localStorage.getItem(MODEL_STORAGE_KEY);
-    return MODEL_OPTIONS.some((option) => option.id === stored) ? stored : DEFAULT_MODEL_ID;
-  } catch {
-    return DEFAULT_MODEL_ID;
-  }
-}
 function getSelectedModel() {
   return MODEL_OPTIONS.find((option) => option.id === selectedModelId) || MODEL_OPTIONS.find((option) => option.id === DEFAULT_MODEL_ID);
 }
 function getProviderForModel(modelId) {
   return MODEL_PROVIDERS.find((provider) => provider.models.some((model) => model.id === modelId)) || MODEL_PROVIDERS[0];
 }
-function persistSelectedModel() {
-  try { localStorage.setItem(MODEL_STORAGE_KEY, selectedModelId); } catch {}
-}
 function setSelectedModel(modelId, persist = false) {
   const option = MODEL_OPTIONS.find((item) => item.id === modelId) || MODEL_OPTIONS.find((item) => item.id === DEFAULT_MODEL_ID);
   const provider = getProviderForModel(option.id);
   selectedModelId = option.id;
+
+  if (persist) {
+    const chat = getActiveChat();
+    if (chat && chat.modelId !== option.id) {
+      chat.modelId = option.id;
+      void saveConversationModel(chat.id, option.id);
+    }
+  }
+
   if (topbarTitleEl) topbarTitleEl.textContent = getModelDisplayName(option.id);
   if (modelPickerBtnEl) modelPickerBtnEl.title = getModelDisplayName(option.id);
   if (modelQuickBtnEl) modelQuickBtnEl.title = `${provider.label}: ${option.label}`;
@@ -174,7 +171,6 @@ function setSelectedModel(modelId, persist = false) {
     });
   }
   updateImageAttachmentAvailability();
-  if (persist) persistSelectedModel();
 }
 function isActiveChatModelLocked() {
   const chat = getActiveChat();
@@ -336,6 +332,9 @@ function toNumber(value, fallback = nowTs()) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 }
+function normalizeModelId(modelId) {
+  return MODEL_OPTIONS.some((option) => option.id === modelId) ? modelId : DEFAULT_MODEL_ID;
+}
 function normalizeMessage(message) {
   if (!message || typeof message !== "object") return null;
   if (message.role !== "user" && message.role !== "assistant" && message.role !== "system") return null;
@@ -354,11 +353,25 @@ function normalizeTheme(theme) { return THEME_MODES.includes(theme) ? theme : "a
 function normalizeConversation(conversation) {
   if (!conversation || typeof conversation !== "object") return null;
   const messages = Array.isArray(conversation.messages) ? conversation.messages.map(normalizeMessage).filter(Boolean) : [];
-  return { id: String(conversation.id || `${nowTs()}`), title: String(conversation.title || "گفت‌وگوی جدید"), messages, createdAt: toNumber(conversation.createdAt), updatedAt: toNumber(conversation.updatedAt) };
+  return {
+    id: String(conversation.id || `${nowTs()}`),
+    title: String(conversation.title || "گفت‌وگوی جدید"),
+    modelId: normalizeModelId(conversation.modelId),
+    messages,
+    createdAt: toNumber(conversation.createdAt),
+    updatedAt: toNumber(conversation.updatedAt),
+  };
 }
 function normalizeConversationSummary(conversation) {
   if (!conversation || typeof conversation !== "object") return null;
-  return { id: String(conversation.id || `${nowTs()}`), title: String(conversation.title || "گفت‌وگوی جدید"), messages: [], createdAt: toNumber(conversation.createdAt), updatedAt: toNumber(conversation.updatedAt) };
+  return {
+    id: String(conversation.id || `${nowTs()}`),
+    title: String(conversation.title || "گفت‌وگوی جدید"),
+    modelId: normalizeModelId(conversation.modelId),
+    messages: [],
+    createdAt: toNumber(conversation.createdAt),
+    updatedAt: toNumber(conversation.updatedAt),
+  };
 }
 function sortChats() {
   chats.sort((a, b) => {
@@ -461,7 +474,12 @@ function upsertConversation(conversation, preserveExistingMessages = true) {
   const index = chats.findIndex((item) => item.id === normalized.id);
   if (index === -1) { chats.unshift(normalized); } else {
     const existing = chats[index];
-    chats[index] = { ...existing, ...normalized, messages: normalized.messages.length > 0 || !preserveExistingMessages ? normalized.messages : existing.messages || [] };
+    chats[index] = {
+      ...existing,
+      ...normalized,
+      modelId: normalized.modelId || existing.modelId || DEFAULT_MODEL_ID,
+      messages: normalized.messages.length > 0 || !preserveExistingMessages ? normalized.messages : existing.messages || [],
+    };
   }
   sortChats();
   return normalized;
@@ -477,7 +495,7 @@ async function syncActiveConversationId(conversationId) {
   await apiRequest("/api/state", { method: "PATCH", body: JSON.stringify({ activeConversationId: conversationId ? String(conversationId) : null }) });
 }
 async function createChat(title = "گفت‌وگوی جدید") {
-  const data = await apiRequest("/api/conversations", { method: "POST", body: JSON.stringify({}) });
+  const data = await apiRequest("/api/conversations", { method: "POST", body: JSON.stringify({ modelId: selectedModelId }) });
   const conversation = data.conversation || data;
   upsertConversation(conversation, false);
   activeChatId = String(conversation.id);
@@ -503,6 +521,8 @@ async function setActiveChat(chatId) {
   closeDrawer();
   await syncActiveConversationId(activeChatId);
   await loadConversationDetail(activeChatId);
+  const chat = getActiveChat();
+  if (chat && chat.modelId) setSelectedModel(chat.modelId, false);
   renderChatList();
   renderActiveChat();
 }
@@ -1181,6 +1201,16 @@ async function saveConversationMessages(chatId, messages, title) {
   renderChatList();
   renderActiveChat();
 }
+async function saveConversationModel(chatId, modelId) {
+  try {
+    await apiRequest(`/api/conversations/${encodeURIComponent(chatId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ modelId }),
+    });
+  } catch (error) {
+    console.error("Failed to save conversation model:", error);
+  }
+}
 async function sendMessage(promptOverride = null) {
   if (isSending) return;
   let chat = await ensureActiveChat();
@@ -1193,6 +1223,7 @@ async function sendMessage(promptOverride = null) {
   setSendButtonLoading(true);
   const tempUserMsgId = `${nowTs()}`;
   const image = pendingImageDataUrl;
+  const chatModelId = chat.modelId || selectedModelId;
   const tempUserMsg = { role: "user", content: text, ...(image ? { image } : {}), _id: tempUserMsgId };
   chat.messages.push(tempUserMsg);
   renderActiveChat();
@@ -1203,14 +1234,18 @@ async function sendMessage(promptOverride = null) {
     renderActiveChat();
     const currentStreamingReply = chat.messages.find((message) => message._streaming);
     let updatedConversation = null;
-    await streamApiRequest(`/api/conversations/${encodeURIComponent(chat.id)}/messages/stream`, { content: text, image, model: selectedModelId, clientMessageId: tempUserMsgId }, (eventName, payload) => {
-      if (eventName === "delta" && currentStreamingReply) {
-        currentStreamingReply.content += String(payload.content || "");
-        if (payload.imageUrl) currentStreamingReply.imageUrl = payload.imageUrl;
-        renderActiveChat();
+    await streamApiRequest(
+      `/api/conversations/${encodeURIComponent(chat.id)}/messages/stream`,
+      { content: text, image, model: chatModelId, clientMessageId: tempUserMsgId },
+      (eventName, payload) => {
+        if (eventName === "delta" && currentStreamingReply) {
+          currentStreamingReply.content += String(payload.content || "");
+          if (payload.imageUrl) currentStreamingReply.imageUrl = payload.imageUrl;
+          renderActiveChat();
+        }
+        if (eventName === "done") updatedConversation = payload.conversation || null;
       }
-      if (eventName === "done") updatedConversation = payload.conversation || null;
-    });
+    );
     if (currentStreamingReply) delete currentStreamingReply._streaming;
     if (!updatedConversation) throw new Error("پاسخ گفتگو دریافت نشد.");
     upsertConversation(updatedConversation, false);
@@ -1260,7 +1295,7 @@ async function regenerateLastReply(userMsgIndex = null) {
   setSendButtonLoading(true);
   showLoadingIndicator(userMsgId);
   try {
-    const response = await requestAssistantReply(truncatedMessages);
+    const response = await requestAssistantReply(truncatedMessages, chat.modelId || selectedModelId);
     const assistantReply = extractAssistantContent(response) || "پاسخی دریافت نشد.";
     const streamingReply = { role: "assistant", content: "", _parentId: userMsgId, _id: `stream_${nowTs()}`, _streaming: true };
     chat.messages.push(streamingReply);
@@ -1314,6 +1349,8 @@ async function initializeState() {
   const routeChatId = chatIdFromPath();
   if (routeChatId && chats.some((chat) => chat.id === routeChatId)) activeChatId = routeChatId;
   if (activeChatId) await loadConversationDetail(activeChatId).catch(console.error);
+  const initialChat = getActiveChat();
+  if (initialChat && initialChat.modelId) setSelectedModel(initialChat.modelId, false);
   renderChatList();
   renderActiveChat();
   if (activeChatId) syncChatUrl(getActiveChat(), true);
@@ -1478,7 +1515,7 @@ document.getElementById("confirmDeleteBtn").addEventListener("click", confirmDel
 
 renderModelMenu();
 renderModelQuickMenu();
-setSelectedModel(selectedModelId);
+setSelectedModel(DEFAULT_MODEL_ID, false);
 
 (async () => {
   const authed = await checkAuth();
