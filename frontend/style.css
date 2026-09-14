@@ -683,14 +683,17 @@ button:disabled {
 .assistant-content .katex-display {
   width: 100%;
   padding: 0.5em 0;
-  overflow: visible;
+  overflow-x: auto;
+  overflow-y: hidden;
   direction: ltr;
   text-align: center;
   unicode-bidi: isolate;
+  -webkit-overflow-scrolling: touch;
 }
 .assistant-content .katex-display > .katex {
   display: inline-block;
   max-width: none;
+  min-width: max-content;
 }
 .assistant-content .katex-display .katex-display {
   margin: 0;
@@ -701,6 +704,33 @@ button:disabled {
 }
 .assistant-content .katex .vlist-t {
   overflow: visible;
+}
+.assistant-content .katex-display::-webkit-scrollbar {
+  height: 6px;
+}
+.assistant-content .katex-display::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.35);
+}
+.assistant-content .katex-display::-webkit-scrollbar-track {
+  background: transparent;
+}
+.assistant-content .katex-inline-wrap {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.assistant-content .katex-inline-wrap::-webkit-scrollbar {
+  display: none;
+}
+.assistant-content p,
+.assistant-content li {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .loading-dots {
   display: inline-flex;

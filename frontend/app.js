@@ -701,7 +701,26 @@ const markdownRenderer = window.markdownit({
   .use(window.markdownitTexmath, { engine: window.katex, delimiters: "dollars" })
   .use(window.markdownitTaskLists, { enabled: true, label: true, labelAfter: true });
 function renderMarkdown(markdown) {
-  return markdownRenderer.render(normalizeLatex(markdown));
+  const html = markdownRenderer.render(normalizeLatex(markdown));
+  return wrapInlineKatexForScroll(html);
+}
+function wrapInlineKatexForScroll(html) {
+  if (!html || html.indexOf("katex") === -1) return html;
+  const container = document.createElement("div");
+  container.innerHTML = html;
+
+  container.querySelectorAll(".katex").forEach((el) => {
+    if (el.closest(".katex-display")) return;
+    const parent = el.parentElement;
+    if (!parent) return;
+    if (parent.classList.contains("katex-inline-wrap")) return;
+    const wrapper = document.createElement("span");
+    wrapper.className = "katex-inline-wrap";
+    parent.replaceChild(wrapper, el);
+    wrapper.appendChild(el);
+  });
+
+  return container.innerHTML;
 }
 function normalizeLatex(text) {
   let value = String(text || "");
