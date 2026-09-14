@@ -2,7 +2,9 @@ import hmac
 import json
 import os
 import secrets
-import sqlite3
+import psycopg2
+import psycopg2.extras
+from psycopg2 import pool as psycopg2_pool
 import time
 import base64
 from contextlib import contextmanager
@@ -17,19 +19,27 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 FRONTEND_DIR = BASE_DIR / "frontend"
-# Vercel's deployed filesystem is read-only; only /tmp is writable there.
-# Keep a local default for development, while allowing an explicit override
-# for deployments that provide a persistent database location.
-if os.getenv("DATABASE_PATH"):
-    DATABASE_PATH = Path(os.environ["DATABASE_PATH"])
-elif os.getenv("VERCEL"):
-    DATABASE_PATH = Path("/tmp/gapino-database.db")
-else:
-    DATABASE_PATH = BASE_DIR / "backend" / "data" / "database.db"
+DATABASE_URL = os.getenv("DATABASE_URL")
 DATABASE_LOCK = RLock()
 
-# Static files are served explicitly below so unknown client-side routes can
-# fall back to index.html (useful for PWA navigation and browser refreshes).
+_DB_POOL = None
+_DB_POOL_LOCK = RLock()
+
+
+def get_pool():
+    global _DB_POOL
+    if _DB_POOL is None:
+        with _DB_POOL_LOCK:
+            if _DB_POOL is None:
+                _DB_POOL = psycopg2_pool.ThreadedConnectionPool(
+                    minconn=1,
+                    maxconn=5,
+                    dsn=DATABASE_URL,
+                    connect_timeout=30,
+                )
+    return _DB_POOL
+
+
 app = Flask(__name__, static_folder=None)
 app.json.ensure_ascii = False
 
@@ -39,7 +49,7 @@ GAPGPT_API_KEY = os.getenv("GAPGPT_API_KEY")
 GAPGPT_API_URL = os.getenv("GAPGPT_API_URL")
 IMAGE_GENERATION_API_URL = os.getenv("IMAGE_GENERATION_API_URL") or (GAPGPT_API_URL or "").replace("/chat/completions", "/images/generations")
 PROMPT_MODEL = "gemini-3.1-flash-lite"
-SESSION_TTL = 60 * 60 * 24 * 30  # 30 days
+SESSION_TTL = 60 * 60 * 24 * 30
 SESSION_COOKIE_NAME = "gapino_session"
 SESSION_SERIALIZER = URLSafeTimedSerializer(
     os.getenv("SESSION_SECRET") or GAPGPT_API_KEY,
@@ -71,28 +81,68 @@ if not GAPGPT_API_URL:
     raise RuntimeError("Missing GAPGPT_API_URL in .env")
 
 
+class PostgreSQLConnection:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        self.connection.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return self.connection.__exit__(exc_type, exc_value, traceback)
+
+    def cursor(self):
+        return self.connection.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+    def execute(self, query, parameters=None):
+        cursor = self.cursor()
+        cursor.execute(query, parameters)
+        return cursor
+
+    def executemany(self, query, parameters):
+        cursor = self.cursor()
+        cursor.executemany(query, parameters)
+        return cursor
+
+    def commit(self):
+        self.connection.commit()
+
+    def rollback(self):
+        self.connection.rollback()
+
+    def close(self):
+        pass
+
+
 @contextmanager
 def database_connection():
-    """Yield a configured SQLite connection and always close it afterwards."""
-    DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(
-        DATABASE_PATH,
-        timeout=30,
-        check_same_thread=False,
-    )
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 30000")
+    if not DATABASE_URL:
+        raise RuntimeError("Missing DATABASE_URL in .env")
+    pool = get_pool()
+    raw = pool.getconn()
+    connection = PostgreSQLConnection(raw)
     try:
         yield connection
     finally:
-        connection.close()
+        try:
+            if raw.closed:
+                pool.putconn(raw, close=True)
+            else:
+                raw.rollback()
+                pool.putconn(raw)
+        except Exception:
+            try:
+                pool.putconn(raw, close=True)
+            except Exception:
+                pass
 
 
 def initialize_database():
     with database_connection() as connection:
-        connection.executescript(
-            """
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
             CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
                 owner_username TEXT NOT NULL DEFAULT 'admin',
@@ -101,7 +151,7 @@ def initialize_database():
                 updated_at INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
                 content TEXT NOT NULL,
@@ -114,6 +164,10 @@ def initialize_database():
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session_timestamp
                 ON messages(session_id, timestamp, id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_session_timestamp_unique
+                ON messages(session_id, timestamp);
+            CREATE INDEX IF NOT EXISTS idx_conversations_owner
+                ON conversations(owner_username, updated_at DESC);
             CREATE TABLE IF NOT EXISTS app_state (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -126,23 +180,30 @@ def initialize_database():
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_expires
                 ON sessions(expires_at);
-            """
-        )
-        message_columns = {row["name"] for row in connection.execute("PRAGMA table_info(messages)").fetchall()}
-        conversation_columns = {row["name"] for row in connection.execute("PRAGMA table_info(conversations)").fetchall()}
-        session_columns = {row["name"] for row in connection.execute("PRAGMA table_info(sessions)").fetchall()}
-        if "owner_username" not in conversation_columns:
-            connection.execute("ALTER TABLE conversations ADD COLUMN owner_username TEXT NOT NULL DEFAULT 'admin'")
-        if "username" not in session_columns:
-            connection.execute("ALTER TABLE sessions ADD COLUMN username TEXT NOT NULL DEFAULT 'admin'")
-        if "image" not in message_columns:
-            connection.execute("ALTER TABLE messages ADD COLUMN image TEXT")
-        if "image_url" not in message_columns:
-            connection.execute("ALTER TABLE messages ADD COLUMN image_url TEXT")
-        if "message_key" not in message_columns:
-            connection.execute("ALTER TABLE messages ADD COLUMN message_key TEXT")
-        if "parent_key" not in message_columns:
-            connection.execute("ALTER TABLE messages ADD COLUMN parent_key TEXT")
+                """
+            )
+            cursor.execute(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name IN ('messages', 'conversations', 'sessions')"
+            )
+            columns_by_table = {}
+            for row in cursor.fetchall():
+                columns_by_table.setdefault(row["table_name"], set()).add(row["column_name"])
+            message_columns = columns_by_table.get("messages", set())
+            conversation_columns = columns_by_table.get("conversations", set())
+            session_columns = columns_by_table.get("sessions", set())
+            if "owner_username" not in conversation_columns:
+                cursor.execute("ALTER TABLE conversations ADD COLUMN owner_username TEXT NOT NULL DEFAULT 'admin'")
+            if "username" not in session_columns:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN username TEXT NOT NULL DEFAULT 'admin'")
+            if "image" not in message_columns:
+                cursor.execute("ALTER TABLE messages ADD COLUMN image TEXT")
+            if "image_url" not in message_columns:
+                cursor.execute("ALTER TABLE messages ADD COLUMN image_url TEXT")
+            if "message_key" not in message_columns:
+                cursor.execute("ALTER TABLE messages ADD COLUMN message_key TEXT")
+            if "parent_key" not in message_columns:
+                cursor.execute("ALTER TABLE messages ADD COLUMN parent_key TEXT")
         connection.commit()
 
 
@@ -165,7 +226,6 @@ def json_error(message, status=400, **extra):
 
 
 def repair_mojibake(value):
-    """Repair UTF-8 text that an upstream service decoded as Latin-1 once."""
     if not isinstance(value, str):
         return value
     mojibake_markers = ("Ø", "Ù", "Ú", "â", "Ã", "\x80", "\x8c", "\x9d")
@@ -178,11 +238,7 @@ def repair_mojibake(value):
     return repaired if any("\u0600" <= char <= "\u06ff" for char in repaired) else value
 
 
-# ---------------------------------------------------------------------------
-# Authentication helpers
-# ---------------------------------------------------------------------------
-
-def verify_credentials(username: str, password: str) -> bool:
+def verify_credentials(username, password):
     normalized_username = str(username or "").strip().lower()
     expected_password = DEFAULT_USERS.get(normalized_username)
     if not expected_password:
@@ -193,21 +249,21 @@ def verify_credentials(username: str, password: str) -> bool:
     )
 
 
-def issue_session_token(username: str) -> str:
+def issue_session_token(username):
     token = SESSION_SERIALIZER.dumps({"username": username})
     now = now_ts()
     with DATABASE_LOCK:
         with database_connection() as connection:
             with connection:
                 connection.execute(
-                    "INSERT INTO sessions (token, username, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO sessions (token, username, created_at, expires_at) VALUES (%s, %s, %s, %s)",
                     (token, username, now, now + SESSION_TTL),
                 )
-                connection.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+                connection.execute("DELETE FROM sessions WHERE expires_at < %s", (now,))
     return token
 
 
-def is_valid_session(token: str) -> bool:
+def is_valid_session(token):
     if not token:
         return False
     try:
@@ -215,29 +271,23 @@ def is_valid_session(token: str) -> bool:
         return str(payload.get("username") or "").lower() in DEFAULT_USERS
     except (BadSignature, SignatureExpired, AttributeError):
         pass
-    now = now_ts()
-    with DATABASE_LOCK:
-        with database_connection() as connection:
-            row = connection.execute(
-                "SELECT expires_at FROM sessions WHERE token = ?", (token,)
-            ).fetchone()
-    return bool(row and row["expires_at"] > now)
+    return False
 
 
-def revoke_session(token: str) -> None:
+def revoke_session(token):
     if not token:
         return
     with DATABASE_LOCK:
         with database_connection() as connection:
             with connection:
-                connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
+                connection.execute("DELETE FROM sessions WHERE token = %s", (token,))
 
 
-def get_session_token() -> str:
+def get_session_token():
     return request.cookies.get(SESSION_COOKIE_NAME, "")
 
 
-def get_current_username() -> str:
+def get_current_username():
     token = get_session_token()
     if not token:
         return ""
@@ -246,18 +296,8 @@ def get_current_username() -> str:
         username = str(payload.get("username") or "").lower()
         return username if username in DEFAULT_USERS else ""
     except (BadSignature, SignatureExpired, AttributeError):
-        pass
-    with DATABASE_LOCK:
-        with database_connection() as connection:
-            row = connection.execute(
-                "SELECT username, expires_at FROM sessions WHERE token = ?", (token,)
-            ).fetchone()
-    return str(row["username"]).lower() if row and row["expires_at"] > now_ts() else ""
+        return ""
 
-
-# ---------------------------------------------------------------------------
-# State helpers
-# ---------------------------------------------------------------------------
 
 def default_state():
     return {
@@ -368,18 +408,17 @@ def normalize_state(state):
 
 
 def _load_store_unlocked(owner_username="admin"):
-    """Read the application state from SQLite into the API's state shape."""
     with database_connection() as connection:
         conversations = []
         conversation_rows = connection.execute(
             "SELECT id, title, created_at, updated_at FROM conversations "
-            "WHERE owner_username = ? ORDER BY updated_at DESC, created_at DESC",
+            "WHERE owner_username = %s ORDER BY updated_at DESC, created_at DESC",
             (owner_username,),
         ).fetchall()
         message_rows = connection.execute(
             "SELECT m.session_id, m.role, m.content, m.image, m.image_url, m.message_key, m.parent_key "
             "FROM messages m JOIN conversations c ON c.id = m.session_id "
-            "WHERE c.owner_username = ? ORDER BY m.timestamp ASC, m.id ASC",
+            "WHERE c.owner_username = %s ORDER BY m.timestamp ASC, m.id ASC",
             (owner_username,),
         ).fetchall()
         messages_by_session = {}
@@ -407,7 +446,7 @@ def _load_store_unlocked(owner_username="admin"):
         state_values = {
             row["key"]: row["value"]
             for row in connection.execute(
-                "SELECT key, value FROM app_state WHERE key LIKE ?", (f"{owner_username}:%",)
+                "SELECT key, value FROM app_state WHERE key LIKE %s", (f"{owner_username}:%",)
             ).fetchall()
         }
     state = default_state()
@@ -422,49 +461,101 @@ def _load_store_unlocked(owner_username="admin"):
 
 
 def _save_store_unlocked(state, owner_username="admin"):
-    """Persist a complete normalized state atomically in one SQLite transaction."""
     normalized = normalize_state(state)
     with database_connection() as connection:
         with connection:
-            connection.execute("DELETE FROM messages WHERE session_id IN (SELECT id FROM conversations WHERE owner_username = ?)", (owner_username,))
-            connection.execute("DELETE FROM conversations WHERE owner_username = ?", (owner_username,))
-            connection.executemany(
-                "INSERT INTO conversations (id, owner_username, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                [
+            current_ids = [c["id"] for c in normalized["conversations"]]
+            if current_ids:
+                placeholders = ",".join(["%s"] * len(current_ids))
+                connection.execute(
+                    f"DELETE FROM conversations WHERE owner_username = %s AND id NOT IN ({placeholders})",
+                    (owner_username, *current_ids),
+                )
+            else:
+                connection.execute(
+                    "DELETE FROM conversations WHERE owner_username = %s",
+                    (owner_username,),
+                )
+            for conversation in normalized["conversations"]:
+                connection.execute(
+                    """
+                    INSERT INTO conversations (id, owner_username, title, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        updated_at = EXCLUDED.updated_at
+                    """,
                     (
                         conversation["id"],
                         owner_username,
                         conversation["title"],
                         conversation["createdAt"],
                         conversation["updatedAt"],
+                    ),
+                )
+            for conversation in normalized["conversations"]:
+                messages = conversation["messages"]
+                current_keys = [m.get("_id") for m in messages if m.get("_id")]
+                if current_keys:
+                    placeholders = ",".join(["%s"] * len(current_keys))
+                    connection.execute(
+                        f"DELETE FROM messages WHERE session_id = %s AND message_key IS NOT NULL AND message_key NOT IN ({placeholders})",
+                        (conversation["id"], *current_keys),
                     )
-                    for conversation in normalized["conversations"]
-                ],
-            )
-            connection.executemany(
-                "INSERT INTO messages (session_id, role, content, image, image_url, message_key, parent_key, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        conversation["id"],
-                        message["role"],
-                        message["content"],
-                        message.get("image"),
-                        message.get("imageUrl"),
-                        message.get("_id"),
-                        message.get("_parentId"),
-                        conversation["createdAt"] + index,
+                else:
+                    connection.execute(
+                        "DELETE FROM messages WHERE session_id = %s AND message_key IS NOT NULL",
+                        (conversation["id"],),
                     )
-                    for conversation in normalized["conversations"]
-                    for index, message in enumerate(conversation["messages"])
-                ],
-            )
+                current_timestamps = [conversation["createdAt"] + i for i in range(len(messages))]
+                if current_timestamps:
+                    placeholders = ",".join(["%s"] * len(current_timestamps))
+                    connection.execute(
+                        f"DELETE FROM messages WHERE session_id = %s AND timestamp NOT IN ({placeholders})",
+                        (conversation["id"], *current_timestamps),
+                    )
+                else:
+                    connection.execute(
+                        "DELETE FROM messages WHERE session_id = %s",
+                        (conversation["id"],),
+                    )
+            all_messages = []
+            for conversation in normalized["conversations"]:
+                for index, message in enumerate(conversation["messages"]):
+                    all_messages.append(
+                        (
+                            conversation["id"],
+                            message["role"],
+                            message["content"],
+                            message.get("image"),
+                            message.get("imageUrl"),
+                            message.get("_id"),
+                            message.get("_parentId"),
+                            conversation["createdAt"] + index,
+                        )
+                    )
+            if all_messages:
+                connection.executemany(
+                    """
+                    INSERT INTO messages (session_id, role, content, image, image_url, message_key, parent_key, timestamp)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (session_id, timestamp) DO UPDATE SET
+                        role = EXCLUDED.role,
+                        content = EXCLUDED.content,
+                        image = EXCLUDED.image,
+                        image_url = EXCLUDED.image_url,
+                        message_key = EXCLUDED.message_key,
+                        parent_key = EXCLUDED.parent_key
+                    """,
+                    all_messages,
+                )
             state_values = {
                 f"{owner_username}:profile": json.dumps(normalized["profile"], ensure_ascii=False),
                 f"{owner_username}:theme": normalized["theme"],
                 f"{owner_username}:activeConversationId": normalized["activeConversationId"] or "",
             }
             connection.executemany(
-                "INSERT INTO app_state (key, value) VALUES (?, ?) "
+                "INSERT INTO app_state (key, value) VALUES (%s, %s) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 state_values.items(),
             )
@@ -592,7 +683,6 @@ def extract_stream_delta(data):
 
 
 def upstream_message(message):
-    """Convert an internal message to the OpenAI-compatible multimodal format."""
     if message.get("role") == "user" and message.get("image"):
         return {
             "role": "user",
@@ -678,7 +768,7 @@ def extract_assistant_content(data):
             return repair_mojibake(value.strip())
     raw = data.get("raw")
     if isinstance(raw, str) and raw.strip():
-            return repair_mojibake(raw.strip())
+        return repair_mojibake(raw.strip())
     return ""
 
 
@@ -713,10 +803,6 @@ def generate_conversation_title(user_content):
         return user_content[:30].strip()
 
 
-# ---------------------------------------------------------------------------
-# Auth middleware + endpoints
-# ---------------------------------------------------------------------------
-
 PUBLIC_API_PATHS = {
     "/api/auth/login",
     "/api/auth/status",
@@ -726,10 +812,8 @@ PUBLIC_API_PATHS = {
 @app.before_request
 def require_auth():
     path = request.path or ""
-    # Public API endpoints
     if path in PUBLIC_API_PATHS:
         return None
-    # Only guard API routes; static/front-end assets are served freely
     if not path.startswith("/api/"):
         return None
     token = get_session_token()
@@ -778,10 +862,6 @@ def auth_logout():
     return response
 
 
-# ---------------------------------------------------------------------------
-# Frontend
-# ---------------------------------------------------------------------------
-
 @app.get("/")
 def root():
     return send_from_directory(FRONTEND_DIR, "index.html")
@@ -821,7 +901,6 @@ def chat_page(_chat_path=None):
 
 @app.get("/<path:frontend_path>")
 def frontend_files(frontend_path):
-    """Serve frontend assets and fall back to index.html for client-side routes."""
     if frontend_path == "api" or frontend_path.startswith("api/"):
         return json_error("Not found", 404)
     requested_file = FRONTEND_DIR / frontend_path
@@ -829,10 +908,6 @@ def frontend_files(frontend_path):
         return send_from_directory(FRONTEND_DIR, frontend_path)
     return send_from_directory(FRONTEND_DIR, "index.html")
 
-
-# ---------------------------------------------------------------------------
-# State endpoints
-# ---------------------------------------------------------------------------
 
 @app.get("/api/state")
 def get_state():
@@ -846,6 +921,7 @@ def get_state():
             "promptModel": PROMPT_MODEL,
         }
     )
+
 
 @app.patch("/api/state")
 def patch_state():

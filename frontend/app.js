@@ -51,6 +51,7 @@ const messagesSectionEl = document.getElementById("messagesSection");
 const chatMainEl = document.getElementById("chatMain");
 const userInputEl = document.getElementById("userInput");
 const sendBtnEl = document.getElementById("sendBtn");
+const scrollToBottomBtnEl = document.getElementById("scrollToBottomBtn");
 
 function applyDisplayMode() {
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
@@ -203,8 +204,6 @@ function updateImageAttachmentAvailability() {
   attachImageBtnEl.disabled = isSending;
   attachmentImageOptionEl.disabled = !enabled;
   attachmentImageOptionEl.title = enabled ? "افزودن تصویر" : "افزودن تصویر فقط با مدل Sol فعال است";
-  // Do not clear a selected image while a Sol request is being submitted.
-  // It must remain available until sendMessage reads it into the request body.
   if (!modelAcceptsImages() && pendingImageDataUrl) clearPendingImage();
 }
 function closeAttachmentMenu() {
@@ -439,6 +438,7 @@ function applyTheme(theme, persist = false) {
   currentTheme = nextTheme;
   document.documentElement.dataset.theme = nextTheme;
   document.documentElement.dataset.resolvedTheme = resolvedTheme;
+  try { localStorage.setItem("gapino.theme", nextTheme); } catch {}
   if (themeToggleEl) { themeToggleEl.dataset.theme = nextTheme; themeToggleEl.setAttribute("aria-label", `تم: ${nextTheme}`); themeToggleEl.title = `تم: ${nextTheme}`; }
   if (persist) { apiRequest("/api/theme", { method: "PATCH", body: JSON.stringify({ theme: nextTheme }) }).catch(console.error); }
 }
@@ -588,111 +588,46 @@ function scrollToBottom() {
   if (!chatMainEl) return;
   const scroll = () => { chatMainEl.scrollTop = chatMainEl.scrollHeight; };
   scroll();
+  if (scrollToBottomBtnEl) scrollToBottomBtnEl.hidden = true;
   requestAnimationFrame(() => {
     scroll();
     requestAnimationFrame(scroll);
   });
 }
-function escapeHtml(value) {
-  return String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+function updateScrollToBottomButton() {
+  if (!chatMainEl || !scrollToBottomBtnEl) return;
+  const distanceToBottom = chatMainEl.scrollHeight - chatMainEl.scrollTop - chatMainEl.clientHeight;
+  scrollToBottomBtnEl.hidden = distanceToBottom < 60;
 }
-function renderInlineMarkdown(text) {
-  let html = escapeHtml(text);
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  html = html.replace(/~~([^~]+)~~/g, "<del>$1</del>");
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-  return html;
+function detectDirection(text) {
+  const value = String(text || "");
+  const rtl = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+  const ltr = /[A-Za-z]/;
+  for (const character of value) {
+    if (rtl.test(character)) return "rtl";
+    if (ltr.test(character)) return "ltr";
+  }
+  return "rtl";
 }
-function renderMarkdownToHtml(markdown) {
-  const lines = String(markdown || "").split("\n");
-  const html = [];
-  let inCodeBlock = false;
-  let codeLines = [];
-  let codeLanguage = "";
-  let inList = false;
-  function closeList() { if (inList) { html.push("</ul>"); inList = false; } }
-  function detectCodeLanguage(source, hintedLanguage = "") {
-    const hint = String(hintedLanguage || "").toLowerCase().trim();
-    const aliases = { js: "JavaScript", javascript: "JavaScript", ts: "TypeScript", typescript: "TypeScript", py: "Python", python: "Python", html: "HTML", css: "CSS", json: "JSON", bash: "Bash", shell: "Bash", sh: "Bash", sql: "SQL", java: "Java", c: "C", cpp: "C++", "c++": "C++", cs: "C#", csharp: "C#", php: "PHP", ruby: "Ruby", go: "Go", rust: "Rust", xml: "XML", yaml: "YAML", yml: "YAML", markdown: "Markdown", md: "Markdown", kotlin: "Kotlin", swift: "Swift", dart: "Dart", scala: "Scala", r: "R" };
-    if (aliases[hint]) return aliases[hint];
-    const code = String(source || "").trim();
-    if (/^[{\[]/.test(code)) return "JSON";
-    if (/^<!doctype html|<html[\s>]|<\/\w+>/.test(code.toLowerCase())) return "HTML";
-    if (/^(?:SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|ALTER TABLE|DROP TABLE)\b/im.test(code)) return "SQL";
-    if (/^(?:def |class |import |from \w+ import )/m.test(code)) return "Python";
-    if (/^(?:const |let |var |function |async function |export default |export const |import .* from |require\()/m.test(code)) return "JavaScript";
-    if (/^\s*[.#][\w-]+\s*\{/.test(code)) return "CSS";
-    if (/^\s*[\w.-]+\s*:\s*[^\s;{][^{]*$/m.test(code)) return "YAML";
-    if (/^(?:#include\s*<iostream>|using\s+namespace\s+std|std::)/m.test(code)) return "C++";
-    if (/^(?:#include\s*[<"]|int\s+main\s*\()/m.test(code)) return "C";
-    if (/^(?:#!\/bin|\$ |(?:git|npm|curl|python3?)\s)/m.test(code)) return "Bash";
-    if (/^(?:public\s+(?:static\s+)?void\s+main|package\s+\w+)/m.test(code)) return "Java";
-    return "Code";
-  }
-  function closeCodeBlock() {
-    const source = codeLines.join("\n");
-    const language = detectCodeLanguage(source, codeLanguage);
-    const languageClass = getLanguageClass(codeLanguage, language);
-    html.push(`<pre data-language="${escapeHtml(language)}" data-lang="${escapeHtml(languageClass)}"><code class="language-${escapeHtml(languageClass)}">${escapeHtml(source)}</code></pre>`);
-    codeLines = [];
-    codeLanguage = "";
-    inCodeBlock = false;
-  }
-  function getLanguageClass(hint, language) {
-    const normalizedHint = String(hint || "").toLowerCase().trim();
-    const hintClasses = { js: "javascript", javascript: "javascript", ts: "typescript", typescript: "typescript", py: "python", python: "python", html: "xml", css: "css", json: "json", bash: "bash", shell: "bash", sh: "bash", sql: "sql", java: "java", c: "c", cpp: "cpp", "c++": "cpp", cs: "csharp", csharp: "csharp", php: "php", ruby: "ruby", go: "go", rust: "rust", xml: "xml", yaml: "yaml", yml: "yaml", markdown: "markdown", md: "markdown", kotlin: "kotlin", swift: "swift", dart: "dart", scala: "scala", r: "r" };
-    if (hintClasses[normalizedHint]) return hintClasses[normalizedHint];
-    const labelClasses = { "JavaScript": "javascript", "TypeScript": "typescript", "Python": "python", "HTML": "xml", "CSS": "css", "JSON": "json", "Bash": "bash", "SQL": "sql", "Java": "java", "C": "c", "C++": "cpp", "C#": "csharp", "PHP": "php", "Ruby": "ruby", "Go": "go", "Rust": "rust", "XML": "xml", "YAML": "yaml", "Markdown": "markdown", "Kotlin": "kotlin", "Swift": "swift", "Dart": "dart", "Scala": "scala", "R": "r" };
-    return labelClasses[language] || "plaintext";
-  }
-  function isMarkdownTableSeparator(line) { return /^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(line.trim()); }
-  function splitMarkdownTableRow(line) { return line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()); }
-  function renderMarkdownTable(sourceLines, startIndex) {
-    const headerCells = splitMarkdownTableRow(sourceLines[startIndex]);
-    let index = startIndex + 2;
-    const rows = [];
-    while (index < sourceLines.length && sourceLines[index].trim().startsWith("|")) { rows.push(splitMarkdownTableRow(sourceLines[index])); index += 1; }
-    const header = headerCells.map((cell) => `<th>${renderInlineMarkdown(cell)}</th>`).join("");
-    const body = rows.map((row) => { const cells = headerCells.map((_, cellIndex) => `<td>${renderInlineMarkdown(row[cellIndex] || "")}</td>`).join(""); return `<tr>${cells}</tr>`; }).join("");
-    return { html: `<div class="markdown-table-wrap"><table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>`, nextIndex: index };
-  }
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const trimmed = line.trim();
-    if (trimmed.startsWith("```")) { if (inCodeBlock) { closeCodeBlock(); } else { closeList(); inCodeBlock = true; codeLines = []; codeLanguage = trimmed.slice(3).trim(); } continue; }
-    if (inCodeBlock) { codeLines.push(line); continue; }
-    if (index + 1 < lines.length && trimmed.includes("|") && isMarkdownTableSeparator(lines[index + 1])) {
-      closeList();
-      const table = renderMarkdownTable(lines, index);
-      html.push(table.html);
-      index = table.nextIndex - 1;
-      continue;
-    }
-    if (/^(?:---|\*\*\*|___)$/.test(trimmed)) { closeList(); html.push("<hr>"); continue; }
-    if (!trimmed) {
-      closeList();
-      continue;
-    }
-    if (/^#{1,6}\s+/.test(trimmed)) {
-      closeList();
-      const level = Math.min(trimmed.match(/^#+/)[0].length, 6);
-      const content = trimmed.replace(/^#{1,6}\s+/, "");
-      html.push(`<h${level}>${renderInlineMarkdown(content)}</h${level}>`);
-      continue;
-    }
-    if (/^[-*]\s+/.test(trimmed)) {
-      if (!inList) { html.push("<ul>"); inList = true; }
-      html.push(`<li>${renderInlineMarkdown(trimmed.replace(/^[-*]\s+/, ""))}</li>`);
-      continue;
-    }
-    closeList();
-    html.push(`<p>${renderInlineMarkdown(line)}</p>`);
-  }
-  if (inCodeBlock) closeCodeBlock();
-  closeList();
-  return html.join("");
+const markdownRenderer = window.markdownit({
+  html: false,
+  linkify: true,
+  typographer: true,
+  highlight: (code, language) => `<pre data-language="${String(language || "Code")}" data-lang="${String(language || "plaintext")}"><code class="language-${String(language || "plaintext")}">${window.markdownit().utils.escapeHtml(code)}</code></pre>`,
+})
+  .use(window.markdownitKatex)
+  .use(window.markdownitTaskLists, { enabled: true, label: true, labelAfter: true });
+function renderMarkdown(markdown) {
+  return markdownRenderer.render(normalizeLatex(markdown));
+}
+function normalizeLatex(text) {
+  return String(text || "")
+    .replace(/\\\[/g, "$$$$")
+    .replace(/\\\]/g, "$$$$")
+    .replace(/\\\(/g, "$")
+    .replace(/\\\)/g, "$")
+    .replace(/\\begin\{(\w+)\}/g, "$$$$\\begin{$1}")
+    .replace(/\\end\{(\w+)\}/g, "\\end{$1}$$$$");
 }
 function attachCodeCopyButtons(container) {
   if (!container) return;
@@ -727,8 +662,6 @@ function attachCodeCopyButtons(container) {
     pre.prepend(header);
   });
 }
-function isLatexOnly(text) { const value = String(text || "").trim(); return /^\$\$[\s\S]+\$\$$/.test(value) || /^\\\[[\s\S]+\\\]$/.test(value) || /^\\\([\s\S]+\\\)$/.test(value); }
-function normalizeLatex(text) { return String(text || "").replace(/\\\[/g, "$$").replace(/\\\]/g, "$$").replace(/\\\(/g, "$").replace(/\\\)/g, "$"); }
 async function copyText(text, button) {
   const value = String(text || "");
   const markCopied = () => {
@@ -791,6 +724,7 @@ function renderUserMessage(msg) {
   stack.className = "user-message-stack";
   const bubble = document.createElement("div");
   bubble.className = "message user";
+  bubble.setAttribute("dir", detectDirection(msg.content));
   if (msg.image) {
     const image = document.createElement("img");
     image.className = "message-image user-message-image";
@@ -950,8 +884,8 @@ function renderMessages(messages) {
         wrapper.insertBefore(imageFrame, content);
       };
       const messageText = String(currentMsg.content || "");
-      const normalized = normalizeLatex(messageText);
-      if (isLatexOnly(messageText)) { content.textContent = normalized; } else { content.innerHTML = renderMarkdownToHtml(normalized); }
+      content.setAttribute("dir", detectDirection(messageText));
+      content.innerHTML = renderMarkdown(messageText);
       attachCodeCopyButtons(content);
       wrapper.appendChild(content);
       renderVersionImage(currentMsg);
@@ -980,8 +914,8 @@ function renderMessages(messages) {
           wrapper.dataset.currentVersion = idx;
           const targetMsg = versions[idx];
           const newText = String(targetMsg.content || "");
-          const newNorm = normalizeLatex(newText);
-          if (isLatexOnly(newText)) { content.textContent = newNorm; } else { content.innerHTML = renderMarkdownToHtml(newNorm); }
+          content.setAttribute("dir", detectDirection(newText));
+          content.innerHTML = renderMarkdown(newText);
           renderVersionImage(targetMsg);
           attachCodeCopyButtons(content);
           actionsDiv.querySelectorAll(".meta-btn").forEach((button) => button.remove());
@@ -993,11 +927,6 @@ function renderMessages(messages) {
           undoBtn.disabled = idx === 0;
           redoBtn.disabled = idx === total - 1;
           counterSpan.textContent = `${idx + 1} / ${total}`;
-          try {
-            if (typeof renderMathInElement === "function") {
-              renderMathInElement(content, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }, { left: "\\[", right: "\\]", display: true }, { left: "\\(", right: "\\)", display: false }], throwOnError: false });
-            }
-          } catch (error) { console.error(error); }
         };
         undoBtn.addEventListener("click", () => updateVersion(Number(wrapper.dataset.currentVersion) - 1));
         redoBtn.addEventListener("click", () => updateVersion(Number(wrapper.dataset.currentVersion) + 1));
@@ -1008,11 +937,6 @@ function renderMessages(messages) {
       }
       if (!isStreaming) wrapper.appendChild(actionsDiv);
       messagesSectionEl.appendChild(wrapper);
-      try {
-        if (typeof renderMathInElement === "function") {
-          renderMathInElement(content, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }, { left: "\\[", right: "\\]", display: true }, { left: "\\(", right: "\\)", display: false }], throwOnError: false });
-        }
-      } catch (error) { console.error(error); }
     }
   }
   scrollToBottom();
@@ -1221,7 +1145,7 @@ async function sendMessage(promptOverride = null) {
     console.error("sendMessage failed:", error);
     if (userInputEl) userInputEl.value = text;
     if (image) { pendingImageDataUrl = image; if (attachImageBtnEl) attachImageBtnEl.classList.add("has-image"); showPendingImagePreview(image); }
-    alert("خطا در ارسال پیام: " + (error.message || ""));
+    showToast("خطا در ارسال پیام");
   } finally {
     updateSendingState(false);
     setSendButtonLoading(false);
@@ -1388,7 +1312,7 @@ if (imageInputEl) imageInputEl.addEventListener("change", () => {
   const file = imageInputEl.files && imageInputEl.files[0];
   if (!file) return;
   if (!modelAcceptsImages()) { clearPendingImage(); return; }
-  if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) { alert("فقط تصویر تا ۵ مگابایت قابل ارسال است."); clearPendingImage(); return; }
+  if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) { showToast("فقط تصویر تا ۵ مگابایت قابل ارسال است"); clearPendingImage(); return; }
   const reader = new FileReader();
   reader.onload = () => { pendingImageDataUrl = String(reader.result || ""); if (attachImageBtnEl) attachImageBtnEl.classList.add("has-image"); showPendingImagePreview(pendingImageDataUrl); };
   reader.readAsDataURL(file);
@@ -1412,6 +1336,11 @@ if (modelQuickRangeEl) {
   });
 }
 if (userInputEl) userInputEl.addEventListener("input", autoResizeTextarea);
+if (chatMainEl && scrollToBottomBtnEl) {
+  chatMainEl.addEventListener("scroll", updateScrollToBottomButton, { passive: true });
+  window.addEventListener("resize", updateScrollToBottomButton);
+}
+if (scrollToBottomBtnEl) scrollToBottomBtnEl.addEventListener("click", scrollToBottom);
 if (modelPickerBtnEl) modelPickerBtnEl.addEventListener("click", (event) => { event.stopPropagation(); if (!isActiveChatModelLocked()) toggleModelMenu(); });
 if (menuBtnEl) menuBtnEl.addEventListener("click", openDrawer);
 if (closeDrawerBtnEl) closeDrawerBtnEl.addEventListener("click", closeDrawer);
@@ -1489,7 +1418,7 @@ setSelectedModel(selectedModelId);
 
 (async () => {
   const authed = await checkAuth();
-if (authed) {
+  if (authed) {
     hidePinGate();
     if (window.location.pathname === "/") window.history.replaceState({}, "", "/chat");
     await initializeState();
