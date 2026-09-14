@@ -11,16 +11,22 @@
   <link rel="apple-touch-icon" href="/logo.png" />
   <meta name="color-scheme" content="light dark" />
   <title>Gapino - AI Chat</title>
-  <script src="/debug.js" defer></script>
-  <script>try { const theme = localStorage.getItem("gapino.theme") || "auto"; document.documentElement.dataset.theme = theme; } catch {}</script>
+  <script>
+    try {
+      const theme = localStorage.getItem("gapino.theme") || "auto";
+      document.documentElement.dataset.theme = theme;
+    } catch {}
+  </script>
   <link rel="stylesheet" href="/style.css" />
   <link rel="stylesheet" href="/vendor/katex.min.css" />
   <link rel="stylesheet" href="/vendor/highlight-github-dark.min.css" />
   <script defer src="/vendor/markdown-it.min.js"></script>
-  <script defer src="/vendor/markdown-it-katex.min.js"></script>
+  <script defer src="/vendor/katex.min.js"></script>
+  <script defer src="/vendor/markdown-it-texmath.min.js"></script>
   <script defer src="/vendor/markdown-it-task-lists.min.js"></script>
   <script defer src="/vendor/highlight.min.js"></script>
   <script defer src="/app.js"></script>
+  <script defer src="/debug.js"></script>
 </head>
 <body>
   <div id="pinGate" class="pin-gate" aria-hidden="false">
@@ -195,7 +201,6 @@
         </button>
       </div>
     </div>
-    <button type="button" id="scrollToBottomBtn" class="scroll-to-bottom" aria-label="رفتن به پایین" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
   </div>
 </body>
 </html>

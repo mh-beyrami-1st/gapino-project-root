@@ -51,7 +51,6 @@ const messagesSectionEl = document.getElementById("messagesSection");
 const chatMainEl = document.getElementById("chatMain");
 const userInputEl = document.getElementById("userInput");
 const sendBtnEl = document.getElementById("sendBtn");
-const scrollToBottomBtnEl = document.getElementById("scrollToBottomBtn");
 
 function applyDisplayMode() {
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
@@ -110,7 +109,6 @@ function chatPath(chat) {
   if (!chat) return "/chat";
   return `/chat/${chatRouteId(chat)}`;
 }
-function chatPhotoPath(chat) { return `${chatPath(chat)}/photo.jpg`; }
 function syncChatUrl(chat, replace = false) {
   if (!window.history || !chat) return;
   const nextPath = chatPath(chat);
@@ -154,7 +152,7 @@ function getProviderForModel(modelId) {
   return MODEL_PROVIDERS.find((provider) => provider.models.some((model) => model.id === modelId)) || MODEL_PROVIDERS[0];
 }
 function persistSelectedModel() {
-  try { localStorage.setItem(MODEL_STORAGE_KEY, selectedModelId); } catch { /* localStorage may be unavailable */ }
+  try { localStorage.setItem(MODEL_STORAGE_KEY, selectedModelId); } catch {}
 }
 function setSelectedModel(modelId, persist = false) {
   const option = MODEL_OPTIONS.find((item) => item.id === modelId) || MODEL_OPTIONS.find((item) => item.id === DEFAULT_MODEL_ID);
@@ -586,18 +584,11 @@ function autoResizeTextarea() {
 }
 function scrollToBottom() {
   if (!chatMainEl) return;
-  const scroll = () => { chatMainEl.scrollTop = chatMainEl.scrollHeight; };
-  scroll();
-  if (scrollToBottomBtnEl) scrollToBottomBtnEl.hidden = true;
+  chatMainEl.scrollTop = chatMainEl.scrollHeight;
   requestAnimationFrame(() => {
-    scroll();
-    requestAnimationFrame(scroll);
+    if (!chatMainEl) return;
+    chatMainEl.scrollTop = chatMainEl.scrollHeight;
   });
-}
-function updateScrollToBottomButton() {
-  if (!chatMainEl || !scrollToBottomBtnEl) return;
-  const distanceToBottom = chatMainEl.scrollHeight - chatMainEl.scrollTop - chatMainEl.clientHeight;
-  scrollToBottomBtnEl.hidden = distanceToBottom < 60;
 }
 function detectDirection(text) {
   const value = String(text || "");
@@ -610,24 +601,109 @@ function detectDirection(text) {
   return "rtl";
 }
 const markdownRenderer = window.markdownit({
-  html: false,
+  html: true,
   linkify: true,
   typographer: true,
-  highlight: (code, language) => `<pre data-language="${String(language || "Code")}" data-lang="${String(language || "plaintext")}"><code class="language-${String(language || "plaintext")}">${window.markdownit().utils.escapeHtml(code)}</code></pre>`,
+  highlight: (code, language) =>
+    `<pre data-language="${String(language || "Code")}" data-lang="${String(language || "plaintext")}"><code class="language-${String(language || "plaintext")}">${window.markdownit().utils.escapeHtml(code)}</code></pre>`,
 })
-  .use(window.markdownitKatex)
+  .use(window.markdownitTexmath, { engine: window.katex, delimiters: "dollars" })
   .use(window.markdownitTaskLists, { enabled: true, label: true, labelAfter: true });
 function renderMarkdown(markdown) {
   return markdownRenderer.render(normalizeLatex(markdown));
 }
 function normalizeLatex(text) {
-  return String(text || "")
-    .replace(/\\\[/g, "$$$$")
-    .replace(/\\\]/g, "$$$$")
-    .replace(/\\\(/g, "$")
-    .replace(/\\\)/g, "$")
-    .replace(/\\begin\{(\w+)\}/g, "$$$$\\begin{$1}")
-    .replace(/\\end\{(\w+)\}/g, "\\end{$1}$$$$");
+  let value = String(text || "");
+
+  value = value.replace(/\\\[/g, "$$$$");
+  value = value.replace(/\\\]/g, "$$$$");
+  value = value.replace(/\\\(/g, "$");
+  value = value.replace(/\\\)/g, "$");
+
+  value = value.replace(/\$\$2ex\]/g, "\\\\[2ex]");
+  value = value.replace(/\$\$(\d+(?:\.\d+)?)ex\]/g, "\\\\[$1ex]");
+
+  value = value.replace(/\$\$\s*\n\s*\$\$/g, "");
+  value = value.replace(/\$\$\n\$\$/g, "");
+  value = value.replace(/\$\$[ \t]+/g, "$$$$");
+  value = value.replace(/[ \t]+\$\$/g, "$$$$");
+  value = value.replace(/\$\$\s*\n/g, "$$$$\n");
+  value = value.replace(/\n\s*\$\$/g, "\n$$$$");
+  value = value.replace(/\$\$\$\$/g, "$$$$");
+
+  value = wrapOrphanEnvironments(value);
+  value = splitGluedDisplayMath(value);
+  value = stripCasesRowSpacing(value);
+
+  value = value.replace(/\$\$\s*\n\s*\$\$/g, "");
+  value = value.replace(/\$\$\n\$\$/g, "");
+  value = value.replace(/\$\$\$\$/g, "$$$$");
+
+  return value;
+}
+function wrapOrphanEnvironments(text) {
+  const envPattern = /\\begin\{(\w+)\}[\s\S]*?\\end\{\1\}/g;
+  return text.replace(envPattern, (match, _name, offset, source) => {
+    const before = source.slice(0, offset);
+    const after = source.slice(offset + match.length);
+    const openCount = (before.match(/\$\$/g) || []).length;
+    const closeCount = (after.match(/\$\$/g) || []).length;
+    const alreadyOpen = openCount % 2 === 1;
+    const alreadyClosed = closeCount % 2 === 1;
+    if (alreadyOpen && alreadyClosed) return match;
+    if (alreadyOpen && !alreadyClosed) return `${match}\n$$$$`;
+    if (!alreadyOpen && alreadyClosed) return `$$$$\n${match}`;
+    return `$$$$\n${match}\n$$$$`;
+  });
+}
+function splitGluedDisplayMath(text) {
+  const pattern = /\$\$([\s\S]*?)\$\$/g;
+  return text.replace(pattern, (match, body) => {
+    const casesOpen = (body.match(/\\begin\{/g) || []).length;
+    const casesClose = (body.match(/\\end\{/g) || []).length;
+    if (casesOpen !== casesClose) return match;
+    const splitIndex = findGluedSplit(body);
+    if (splitIndex === -1) return match;
+    const first = body.slice(0, splitIndex).trim();
+    const second = body.slice(splitIndex).trim();
+    if (!first || !second) return match;
+    return `$$${first}$$\n\n$$${second}$$`;
+  });
+}
+function findGluedSplit(body) {
+  const casesEnd = body.lastIndexOf("\\end{cases}");
+  if (casesEnd !== -1) {
+    const after = casesEnd + "\\end{cases}".length;
+    const tail = body.slice(after);
+    const tailMatch = tail.search(/[A-Za-z]\s*\([^)]*\)\s*=/);
+    if (tailMatch !== -1) {
+      const idx = after + tailMatch;
+      if (isBalancedFragment(body.slice(0, idx))) return idx;
+    }
+  }
+  const fnPattern = /[A-Za-z]\s*\([^)]*\)\s*=\s*(?:\\begin|\\frac|\\sum|\\int|\\left|\\[a-zA-Z]+)/g;
+  let match;
+  while ((match = fnPattern.exec(body)) !== null) {
+    const idx = match.index;
+    if (idx === 0) continue;
+    if (isBalancedFragment(body.slice(0, idx))) return idx;
+  }
+  return -1;
+}
+function isBalancedFragment(fragment) {
+  const braces = (fragment.match(/\{/g) || []).length - (fragment.match(/\}/g) || []).length;
+  if (braces !== 0) return false;
+  const left = (fragment.match(/\\left/g) || []).length;
+  const right = (fragment.match(/\\right/g) || []).length;
+  if (left !== right) return false;
+  return true;
+}
+function stripCasesRowSpacing(text) {
+  const pattern = /\\begin\{cases\}([\s\S]*?)\\end\{cases\}/g;
+  return text.replace(pattern, (match, body) => {
+    const cleaned = body.replace(/\\\\\s*\[\s*\d+(?:\.\d+)?\s*(?:ex|pt|em|cm|mm|in)\s*\]/g, "\\\\");
+    return `\\begin{cases}${cleaned}\\end{cases}`;
+  });
 }
 function attachCodeCopyButtons(container) {
   if (!container) return;
@@ -1244,10 +1320,6 @@ async function initializeState() {
   autoResizeTextarea();
   scrollToBottom();
 }
-
-/* ----------------------------------------------------------------------- */
-/* Auth (PIN)                                                               */
-/* ----------------------------------------------------------------------- */
 async function checkAuth() {
   try {
     const res = await fetch("/api/auth/status", { credentials: "same-origin" });
@@ -1301,9 +1373,6 @@ if (pinFormEl) {
   });
 }
 
-/* ----------------------------------------------------------------------- */
-/* Boot                                                                     */
-/* ----------------------------------------------------------------------- */
 if (sendBtnEl) sendBtnEl.addEventListener("click", (event) => { event.preventDefault(); void sendMessage(); });
 if (attachImageBtnEl) attachImageBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleAttachmentMenu(); });
 if (attachmentImageOptionEl) attachmentImageOptionEl.addEventListener("click", () => { if (modelAcceptsImages() && imageInputEl) imageInputEl.click(); closeAttachmentMenu(); });
@@ -1336,11 +1405,6 @@ if (modelQuickRangeEl) {
   });
 }
 if (userInputEl) userInputEl.addEventListener("input", autoResizeTextarea);
-if (chatMainEl && scrollToBottomBtnEl) {
-  chatMainEl.addEventListener("scroll", updateScrollToBottomButton, { passive: true });
-  window.addEventListener("resize", updateScrollToBottomButton);
-}
-if (scrollToBottomBtnEl) scrollToBottomBtnEl.addEventListener("click", scrollToBottom);
 if (modelPickerBtnEl) modelPickerBtnEl.addEventListener("click", (event) => { event.stopPropagation(); if (!isActiveChatModelLocked()) toggleModelMenu(); });
 if (menuBtnEl) menuBtnEl.addEventListener("click", openDrawer);
 if (closeDrawerBtnEl) closeDrawerBtnEl.addEventListener("click", closeDrawer);

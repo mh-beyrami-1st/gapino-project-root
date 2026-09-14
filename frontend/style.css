@@ -501,7 +501,7 @@ button:disabled {
   margin-bottom: 80px;
   padding: 24px clamp(16px, 4vw, 56px) 20px;
   overflow-y: auto;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
 }
 .messages {
   width: min(100%, 820px);
@@ -780,8 +780,8 @@ button:disabled {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   font-weight: 700;
-}.assistant-content
-.code-copy-btn {
+}
+.assistant-content .code-copy-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -795,12 +795,13 @@ button:disabled {
   cursor: pointer;
   transition: background-color .18s ease, transform .18s ease;
 }
-.code-copy-btn:hover, .code-copy-btn:focus-visible {
+.assistant-content .code-copy-btn:hover,
+.assistant-content .code-copy-btn:focus-visible {
   background: rgba(255,255,255,.2);
   outline: none;
   transform: scale(1.04);
 }
-.code-copy-btn svg {
+.assistant-content .code-copy-btn svg {
   width: 16px;
   height: 16px;
 }
@@ -1770,25 +1771,6 @@ button:disabled {
     opacity: 0.9;
   }
 }
-.scroll-to-bottom {
-  position: fixed;
-  left: 50%;
-  bottom: 94px;
-  z-index: 19;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  border: 1px solid var(--composer-border);
-  border-radius: 50%;
-  background: var(--modal-content-bg);
-  color: var(--text-color);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .16);
-  cursor: pointer;
-  transform: translateX(-50%);
-}
-.scroll-to-bottom svg {
-  width: 22px;
-  height: 22px;
+.katex-mathml {
+  display: none !important;
 }
