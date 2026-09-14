@@ -4,7 +4,7 @@ import os
 import secrets
 import psycopg2
 import psycopg2.extras
-from psycopg2 import pool as psycopg2_pool
+import psycopg2.pool
 import time
 import base64
 from contextlib import contextmanager
@@ -12,7 +12,7 @@ from pathlib import Path
 from threading import RLock
 import requests
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, redirect, request, send_from_directory, stream_with_context
+from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory, stream_with_context
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 load_dotenv()
@@ -22,28 +22,17 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 DATABASE_URL = os.getenv("DATABASE_URL")
 DATABASE_LOCK = RLock()
 
-STATE_CACHE = {}
-STATE_CACHE_TTL = 8.0
-STATE_CACHE_LOCK = RLock()
-
+USE_LOCAL_POOL = os.getenv("USE_LOCAL_POOL", "1") == "1"
 _DB_POOL = None
 _DB_POOL_LOCK = RLock()
+_POOL_FAILED = False
 
+STATE_CACHE = {}
+STATE_CACHE_TTL = 30.0
+STATE_CACHE_LOCK = RLock()
+
+SCHEMA_VERSION = "3"
 DEFAULT_MODEL_ID = "gpt-5.6-sol"
-
-
-def get_pool():
-    global _DB_POOL
-    if _DB_POOL is None:
-        with _DB_POOL_LOCK:
-            if _DB_POOL is None:
-                _DB_POOL = psycopg2_pool.ThreadedConnectionPool(
-                    minconn=1,
-                    maxconn=5,
-                    dsn=DATABASE_URL,
-                    connect_timeout=30,
-                )
-    return _DB_POOL
 
 
 app = Flask(__name__, static_folder=None)
@@ -118,33 +107,154 @@ class PostgreSQLConnection:
         self.connection.rollback()
 
     def close(self):
-        pass
+        try:
+            self.connection.close()
+        except Exception:
+            pass
+
+
+def _get_pool():
+    global _DB_POOL, _POOL_FAILED
+    if not USE_LOCAL_POOL or _POOL_FAILED:
+        return None
+    if _DB_POOL is not None:
+        return _DB_POOL
+    with _DB_POOL_LOCK:
+        if _DB_POOL is not None:
+            return _DB_POOL
+        try:
+            _DB_POOL = psycopg2.pool.ThreadedConnectionPool(
+                minconn=2,
+                maxconn=8,
+                dsn=DATABASE_URL,
+                connect_timeout=15,
+                options="-c statement_timeout=30000 -c idle_in_transaction_session_timeout=60000",
+            )
+            return _DB_POOL
+        except Exception:
+            _POOL_FAILED = True
+            return None
+
+
+def _connect_raw():
+    try:
+        return psycopg2.connect(
+            DATABASE_URL,
+            connect_timeout=15,
+            options="-c statement_timeout=30000 -c idle_in_transaction_session_timeout=60000",
+        )
+    except Exception:
+        return psycopg2.connect(DATABASE_URL, connect_timeout=15)
 
 
 @contextmanager
 def database_connection():
     if not DATABASE_URL:
         raise RuntimeError("Missing DATABASE_URL in .env")
-    pool = get_pool()
-    raw = pool.getconn()
-    connection = PostgreSQLConnection(raw)
-    try:
-        yield connection
-    finally:
+
+    pool = _get_pool()
+    if pool is not None:
+        raw = None
         try:
+            raw = pool.getconn()
             if raw.closed:
                 pool.putconn(raw, close=True)
-            else:
-                raw.rollback()
-                pool.putconn(raw)
-        except Exception:
+                raw = pool.getconn()
+            wrapper = PostgreSQLConnection(raw)
             try:
-                pool.putconn(raw, close=True)
+                yield wrapper
+            except Exception:
+                try:
+                    raw.rollback()
+                except Exception:
+                    pass
+                raise
+            finally:
+                try:
+                    if raw.closed:
+                        pool.putconn(raw, close=True)
+                    else:
+                        raw.rollback()
+                        pool.putconn(raw)
+                except Exception:
+                    try:
+                        pool.putconn(raw, close=True)
+                    except Exception:
+                        pass
+            return
+        except Exception:
+            pass
+
+    connection = None
+    in_request = False
+    try:
+        connection = getattr(g, "_db_connection", None)
+        in_request = True
+    except RuntimeError:
+        in_request = False
+
+    if connection is None:
+        raw = _connect_raw()
+        connection = PostgreSQLConnection(raw)
+        if in_request:
+            g._db_connection = connection
+
+    try:
+        yield connection
+    except Exception:
+        try:
+            connection.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        if not in_request:
+            try:
+                connection.close()
             except Exception:
                 pass
 
 
+@app.teardown_appcontext
+def _teardown_db_connection(exc):
+    connection = g.pop("_db_connection", None)
+    if connection is not None:
+        try:
+            connection.rollback()
+        except Exception:
+            pass
+        try:
+            connection.close()
+        except Exception:
+            pass
+
+
+_INIT_DONE = False
+
+
+def _fast_init():
+    global _INIT_DONE
+    if _INIT_DONE:
+        return True
+    try:
+        with database_connection() as connection:
+            cursor = connection.execute(
+                "SELECT value FROM app_state WHERE key = %s",
+                ("schema_version",),
+            )
+            row = cursor.fetchone()
+            if row and row["value"] == SCHEMA_VERSION:
+                _INIT_DONE = True
+                return True
+            return False
+    except Exception:
+        return False
+
+
 def initialize_database():
+    global _INIT_DONE
+    if _fast_init():
+        return
     with database_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -216,7 +326,13 @@ def initialize_database():
                 cursor.execute("ALTER TABLE messages ADD COLUMN message_key TEXT")
             if "parent_key" not in message_columns:
                 cursor.execute("ALTER TABLE messages ADD COLUMN parent_key TEXT")
+            cursor.execute(
+                "INSERT INTO app_state (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                ("schema_version", SCHEMA_VERSION),
+            )
         connection.commit()
+    _INIT_DONE = True
 
 
 initialize_database()
@@ -229,6 +345,10 @@ DEFAULT_CONVERSATION_TITLE = "گفت‌وگوی جدید"
 
 def now_ts():
     return int(time.time())
+
+
+def now_ts_ms():
+    return int(time.time() * 1000)
 
 
 def json_error(message, status=400, **extra):
@@ -316,6 +436,14 @@ def get_current_username():
         return username if username in DEFAULT_USERS else ""
     except (BadSignature, SignatureExpired, AttributeError):
         return ""
+
+
+def invalidate_state_cache(owner_username=None):
+    with STATE_CACHE_LOCK:
+        if owner_username:
+            STATE_CACHE.pop(owner_username, None)
+        else:
+            STATE_CACHE.clear()
 
 
 def default_state():
@@ -657,20 +785,304 @@ def serialize_conversation(conversation):
     }
 
 
-def create_conversation(state, title=None, model_id=None):
-    timestamp = now_ts()
-    conversation = {
-        "id": f"{timestamp}{secrets.randbelow(1_000_000):06d}",
-        "title": str(title or DEFAULT_CONVERSATION_TITLE).strip() or DEFAULT_CONVERSATION_TITLE,
-        "modelId": normalize_model_id(model_id),
-        "pinned": False,
-        "messages": [],
-        "createdAt": timestamp,
-        "updatedAt": timestamp,
+def _insert_conversation_row(conversation, owner_username):
+    with database_connection() as connection:
+        with connection:
+            connection.execute(
+                "INSERT INTO conversations (id, owner_username, title, model_id, pinned, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (
+                    conversation["id"],
+                    owner_username,
+                    conversation["title"],
+                    conversation["modelId"],
+                    conversation["pinned"],
+                    conversation["createdAt"],
+                    conversation["updatedAt"],
+                ),
+            )
+            connection.execute(
+                "INSERT INTO app_state (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                (f"{owner_username}:activeConversationId", conversation["id"]),
+            )
+    invalidate_state_cache(owner_username)
+
+
+def _delete_conversation_row(conversation_id, owner_username):
+    with database_connection() as connection:
+        with connection:
+            cursor = connection.execute(
+                "DELETE FROM conversations WHERE id = %s AND owner_username = %s RETURNING id",
+                (str(conversation_id), owner_username),
+            )
+            deleted = cursor.fetchone()
+            if not deleted:
+                return False
+            connection.execute(
+                "DELETE FROM app_state WHERE key = %s AND value = %s",
+                (f"{owner_username}:activeConversationId", str(conversation_id)),
+            )
+    invalidate_state_cache(owner_username)
+    return True
+
+
+def _set_active_conversation(conversation_id, owner_username):
+    with database_connection() as connection:
+        with connection:
+            if conversation_id:
+                cursor = connection.execute(
+                    "SELECT 1 FROM conversations WHERE id = %s AND owner_username = %s",
+                    (str(conversation_id), owner_username),
+                )
+                if not cursor.fetchone():
+                    return False
+                connection.execute(
+                    "INSERT INTO app_state (key, value) VALUES (%s, %s) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                    (f"{owner_username}:activeConversationId", str(conversation_id)),
+                )
+            else:
+                connection.execute(
+                    "DELETE FROM app_state WHERE key = %s",
+                    (f"{owner_username}:activeConversationId",),
+                )
+    invalidate_state_cache(owner_username)
+    return True
+
+
+def _set_theme(theme, owner_username):
+    with database_connection() as connection:
+        with connection:
+            connection.execute(
+                "INSERT INTO app_state (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                (f"{owner_username}:theme", theme),
+            )
+    invalidate_state_cache(owner_username)
+
+
+def _set_profile(profile, owner_username):
+    with database_connection() as connection:
+        with connection:
+            connection.execute(
+                "INSERT INTO app_state (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                (
+                    f"{owner_username}:profile",
+                    json.dumps(profile, ensure_ascii=False),
+                ),
+            )
+    invalidate_state_cache(owner_username)
+
+
+def _get_profile(owner_username):
+    with database_connection() as connection:
+        cursor = connection.execute(
+            "SELECT value FROM app_state WHERE key = %s",
+            (f"{owner_username}:profile",),
+        )
+        row = cursor.fetchone()
+    if not row:
+        return dict(DEFAULT_PROFILE)
+    try:
+        data = json.loads(row["value"])
+    except json.JSONDecodeError:
+        return dict(DEFAULT_PROFILE)
+    result = {}
+    for key, fallback in DEFAULT_PROFILE.items():
+        result[key] = str(data.get(key, fallback) or "")
+    return result
+
+
+def _append_message_to_conversation(conversation_id, message, owner_username, model_id=None, title=None):
+    now = now_ts()
+    msg_ts = now_ts_ms()
+    with database_connection() as connection:
+        with connection:
+            cursor = connection.execute(
+                "SELECT 1 FROM conversations WHERE id = %s AND owner_username = %s",
+                (str(conversation_id), owner_username),
+            )
+            if not cursor.fetchone():
+                return False
+
+            connection.execute(
+                """
+                INSERT INTO messages (session_id, role, content, image, image_url, message_key, parent_key, timestamp)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (session_id, timestamp) DO UPDATE SET
+                    role = EXCLUDED.role,
+                    content = EXCLUDED.content,
+                    image = EXCLUDED.image,
+                    image_url = EXCLUDED.image_url,
+                    message_key = EXCLUDED.message_key,
+                    parent_key = EXCLUDED.parent_key
+                """,
+                (
+                    str(conversation_id),
+                    message.get("role") or "user",
+                    message.get("content") or "",
+                    message.get("image"),
+                    message.get("imageUrl"),
+                    message.get("_id"),
+                    message.get("_parentId"),
+                    msg_ts,
+                ),
+            )
+
+            if model_id and title:
+                connection.execute(
+                    "UPDATE conversations SET updated_at = %s, model_id = %s, title = %s WHERE id = %s",
+                    (now, model_id, title, str(conversation_id)),
+                )
+            elif model_id:
+                connection.execute(
+                    "UPDATE conversations SET updated_at = %s, model_id = %s WHERE id = %s",
+                    (now, model_id, str(conversation_id)),
+                )
+            elif title:
+                connection.execute(
+                    "UPDATE conversations SET updated_at = %s, title = %s WHERE id = %s",
+                    (now, title, str(conversation_id)),
+                )
+            else:
+                connection.execute(
+                    "UPDATE conversations SET updated_at = %s WHERE id = %s",
+                    (now, str(conversation_id)),
+                )
+
+            connection.execute(
+                "INSERT INTO app_state (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                (f"{owner_username}:activeConversationId", str(conversation_id)),
+            )
+
+    invalidate_state_cache(owner_username)
+    return True
+
+
+def _load_conversation_messages(conversation_id, owner_username):
+    with database_connection() as connection:
+        rows = connection.execute(
+            "SELECT m.role, m.content, m.image, m.image_url, m.message_key, m.parent_key "
+            "FROM messages m JOIN conversations c ON c.id = m.session_id "
+            "WHERE m.session_id = %s AND c.owner_username = %s "
+            "ORDER BY m.timestamp ASC, m.id ASC",
+            (str(conversation_id), owner_username),
+        ).fetchall()
+    return [
+        {
+            "role": row["role"],
+            "content": row["content"],
+            **({"image": row["image"]} if row["image"] else {}),
+            **({"imageUrl": row["image_url"]} if row["image_url"] else {}),
+            **({"_id": row["message_key"]} if row["message_key"] else {}),
+            **({"_parentId": row["parent_key"]} if row["parent_key"] else {}),
+        }
+        for row in rows
+    ]
+
+
+def _load_conversation_meta(conversation_id, owner_username):
+    with database_connection() as connection:
+        cursor = connection.execute(
+            "SELECT id, title, model_id, pinned, created_at, updated_at "
+            "FROM conversations WHERE id = %s AND owner_username = %s",
+            (str(conversation_id), owner_username),
+        )
+        row = cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "modelId": row["model_id"] or DEFAULT_MODEL_ID,
+        "pinned": bool(row["pinned"]),
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
     }
-    state["conversations"].insert(0, conversation)
-    state["activeConversationId"] = conversation["id"]
-    return conversation
+
+
+def _update_conversation_fields(conversation_id, owner_username, title=None, model_id=None, pinned=None):
+    sets = []
+    values = []
+    if title is not None:
+        sets.append("title = %s")
+        values.append(title)
+    if model_id is not None:
+        sets.append("model_id = %s")
+        values.append(model_id)
+    if pinned is not None:
+        sets.append("pinned = %s")
+        values.append(pinned)
+    sets.append("updated_at = %s")
+    values.append(now_ts())
+    values.extend([str(conversation_id), owner_username])
+    with database_connection() as connection:
+        with connection:
+            cursor = connection.execute(
+                f"UPDATE conversations SET {', '.join(sets)} WHERE id = %s AND owner_username = %s RETURNING id",
+                tuple(values),
+            )
+            updated = cursor.fetchone()
+    if not updated:
+        return False
+    invalidate_state_cache(owner_username)
+    return True
+
+
+def _replace_conversation_messages(conversation_id, messages, owner_username, title=None):
+    now = now_ts()
+    with database_connection() as connection:
+        with connection:
+            cursor = connection.execute(
+                "SELECT 1 FROM conversations WHERE id = %s AND owner_username = %s",
+                (str(conversation_id), owner_username),
+            )
+            if not cursor.fetchone():
+                return False
+
+            connection.execute(
+                "DELETE FROM messages WHERE session_id = %s",
+                (str(conversation_id),),
+            )
+
+            rows = []
+            for index, message in enumerate(messages):
+                rows.append(
+                    (
+                        str(conversation_id),
+                        message.get("role") or "user",
+                        message.get("content") or "",
+                        message.get("image"),
+                        message.get("imageUrl"),
+                        message.get("_id"),
+                        message.get("_parentId"),
+                        now_ts_ms() + index,
+                    )
+                )
+            if rows:
+                connection.executemany(
+                    """
+                    INSERT INTO messages (session_id, role, content, image, image_url, message_key, parent_key, timestamp)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    rows,
+                )
+
+            if title is not None:
+                connection.execute(
+                    "UPDATE conversations SET updated_at = %s, title = %s WHERE id = %s",
+                    (now, title, str(conversation_id)),
+                )
+            else:
+                connection.execute(
+                    "UPDATE conversations SET updated_at = %s WHERE id = %s",
+                    (now, str(conversation_id)),
+                )
+    invalidate_state_cache(owner_username)
+    return True
 
 
 def build_system_prompt(profile):
@@ -967,6 +1379,7 @@ def get_state():
         }
     )
 
+
 @app.patch("/api/state")
 def patch_state():
     if not request.is_json:
@@ -974,38 +1387,39 @@ def patch_state():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return json_error("Invalid JSON body", 400)
-    validation_error = None
+    owner = get_current_username() or "admin"
 
-    def mutate(state):
-        nonlocal validation_error
-        if "activeConversationId" in payload:
-            active_id = payload.get("activeConversationId")
-            if active_id is None:
-                state["activeConversationId"] = None
-            else:
-                active_id = str(active_id)
-                if get_conversation(state, active_id) is None:
-                    validation_error = ("Conversation not found", 404)
-                    return
-                state["activeConversationId"] = active_id
-        if "theme" in payload:
-            theme = str(payload.get("theme") or "").strip()
-            if theme not in {"auto", "light", "dark"}:
-                validation_error = ("Invalid theme", 400)
-                return
-            state["theme"] = theme
-        if "profile" in payload:
-            profile = payload.get("profile")
-            if not isinstance(profile, dict):
-                validation_error = ("profile must be an object", 400)
-                return
-            for key in DEFAULT_PROFILE:
-                if key in profile:
-                    state["profile"][key] = str(profile.get(key) or "")
+    if "activeConversationId" in payload:
+        active_id = payload.get("activeConversationId")
+        if active_id is not None:
+            active_id = str(active_id)
+            if not _set_active_conversation(active_id, owner):
+                return json_error("Conversation not found", 404)
+        else:
+            _set_active_conversation(None, owner)
 
-    state, _ = update_store(mutate)
-    if validation_error:
-        return json_error(*validation_error)
+    if "theme" in payload:
+        theme = str(payload.get("theme") or "").strip()
+        if theme not in {"auto", "light", "dark"}:
+            return json_error("Invalid theme", 400)
+        _set_theme(theme, owner)
+
+    if "profile" in payload:
+        profile = payload.get("profile")
+        if not isinstance(profile, dict):
+            return json_error("profile must be an object", 400)
+        current = _get_profile(owner)
+        for key in DEFAULT_PROFILE:
+            if key in profile:
+                current[key] = str(profile.get(key) or "")
+        _set_profile(current, owner)
+
+    with STATE_CACHE_LOCK:
+        cached = STATE_CACHE.get(owner)
+    if cached:
+        state = cached["state"]
+    else:
+        state = load_store(owner)
     return jsonify(
         {
             "profile": state["profile"],
@@ -1018,8 +1432,8 @@ def patch_state():
 
 @app.get("/api/profile")
 def get_profile():
-    state = load_store()
-    return jsonify({"profile": state["profile"]})
+    owner = get_current_username() or "admin"
+    return jsonify({"profile": _get_profile(owner)})
 
 
 @app.patch("/api/profile")
@@ -1029,14 +1443,13 @@ def patch_profile():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return json_error("Invalid JSON body", 400)
-
-    def mutate(state):
-        for key in DEFAULT_PROFILE:
-            if key in payload:
-                state["profile"][key] = str(payload.get(key) or "")
-
-    state, _ = update_store(mutate)
-    return jsonify({"profile": state["profile"]})
+    owner = get_current_username() or "admin"
+    current = _get_profile(owner)
+    for key in DEFAULT_PROFILE:
+        if key in payload:
+            current[key] = str(payload.get(key) or "")
+    _set_profile(current, owner)
+    return jsonify({"profile": current})
 
 
 @app.get("/api/theme")
@@ -1055,11 +1468,8 @@ def patch_theme():
     theme = str(payload.get("theme") or "").strip()
     if theme not in {"auto", "light", "dark"}:
         return json_error("Invalid theme", 400)
-
-    def mutate(state):
-        state["theme"] = theme
-
-    update_store(mutate)
+    owner = get_current_username() or "admin"
+    _set_theme(theme, owner)
     return jsonify({"theme": theme})
 
 
@@ -1080,22 +1490,29 @@ def create_conversation_endpoint():
     payload = request.get_json(silent=True) if request.is_json else {}
     if not isinstance(payload, dict):
         payload = {}
-
-    def mutate(state):
-        return create_conversation(state, payload.get("title"), payload.get("modelId"))
-
-    state, created = update_store(mutate)
-    conversation = get_conversation(state, created["id"])
+    owner = get_current_username() or "admin"
+    timestamp = now_ts()
+    conversation = {
+        "id": f"{timestamp}{secrets.randbelow(1_000_000):06d}",
+        "title": str(payload.get("title") or DEFAULT_CONVERSATION_TITLE).strip() or DEFAULT_CONVERSATION_TITLE,
+        "modelId": normalize_model_id(payload.get("modelId")),
+        "pinned": False,
+        "messages": [],
+        "createdAt": timestamp,
+        "updatedAt": timestamp,
+    }
+    _insert_conversation_row(conversation, owner)
     return jsonify({"conversation": serialize_conversation(conversation)}), 201
 
 
 @app.get("/api/conversations/<conversation_id>")
 def get_conversation_endpoint(conversation_id):
-    state = load_store()
-    conversation = get_conversation(state, conversation_id)
-    if conversation is None:
+    owner = get_current_username() or "admin"
+    meta = _load_conversation_meta(conversation_id, owner)
+    if meta is None:
         return json_error("Conversation not found", 404)
-    return jsonify({"conversation": serialize_conversation(conversation)})
+    meta["messages"] = _load_conversation_messages(conversation_id, owner)
+    return jsonify({"conversation": serialize_conversation(meta)})
 
 
 @app.patch("/api/conversations/<conversation_id>")
@@ -1105,70 +1522,48 @@ def patch_conversation(conversation_id):
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return json_error("Invalid JSON body", 400)
-    validation_error = None
+    owner = get_current_username() or "admin"
 
-    def mutate(state):
-        nonlocal validation_error
-        conversation = get_conversation(state, conversation_id)
-        if conversation is None:
-            validation_error = ("Conversation not found", 404)
-            return None
-        if "title" in payload:
-            title = str(payload.get("title") or "").strip()
-            conversation["title"] = title or DEFAULT_CONVERSATION_TITLE
-        if "modelId" in payload:
-            model_id = str(payload.get("modelId") or "").strip()
-            if model_id not in SUPPORTED_CHAT_MODELS:
-                validation_error = ("Invalid model", 400)
-                return None
-            conversation["modelId"] = model_id
-        if "pinned" in payload:
-            conversation["pinned"] = bool(payload.get("pinned"))
-        if "messages" in payload:
-            messages = payload.get("messages")
-            if not isinstance(messages, list):
-                validation_error = ("messages must be a list", 400)
-                return None
-            clean_messages = []
-            for message in messages:
-                normalized = normalize_message(message)
-                if normalized and normalized["role"] in {"user", "assistant"}:
-                    clean_messages.append(normalized)
-            conversation["messages"] = clean_messages
-        conversation["updatedAt"] = now_ts()
-        sort_conversations(state)
-        return conversation["id"]
+    title = None
+    model_id = None
+    pinned = None
 
-    state, updated_id = update_store(mutate)
-    if validation_error:
-        return json_error(*validation_error)
-    conversation = get_conversation(state, updated_id)
-    return jsonify({"conversation": serialize_conversation(conversation)})
+    if "title" in payload:
+        title = str(payload.get("title") or "").strip() or DEFAULT_CONVERSATION_TITLE
+    if "modelId" in payload:
+        model_id = str(payload.get("modelId") or "").strip()
+        if model_id not in SUPPORTED_CHAT_MODELS:
+            return json_error("Invalid model", 400)
+    if "pinned" in payload:
+        pinned = bool(payload.get("pinned"))
+
+    if "messages" in payload:
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            return json_error("messages must be a list", 400)
+        clean_messages = []
+        for message in messages:
+            normalized = normalize_message(message)
+            if normalized and normalized["role"] in {"user", "assistant"}:
+                clean_messages.append(normalized)
+        if not _replace_conversation_messages(conversation_id, clean_messages, owner, title):
+            return json_error("Conversation not found", 404)
+    else:
+        if title is not None or model_id is not None or pinned is not None:
+            if not _update_conversation_fields(conversation_id, owner, title, model_id, pinned):
+                return json_error("Conversation not found", 404)
+
+    meta = _load_conversation_meta(conversation_id, owner)
+    if meta is None:
+        return json_error("Conversation not found", 404)
+    meta["messages"] = _load_conversation_messages(conversation_id, owner)
+    return jsonify({"conversation": serialize_conversation(meta)})
 
 
 @app.delete("/api/conversations/<conversation_id>")
 def delete_conversation(conversation_id):
-    not_found = False
-
-    def mutate(state):
-        nonlocal not_found
-        index = next(
-            (
-                index
-                for index, conversation in enumerate(state["conversations"])
-                if conversation["id"] == str(conversation_id)
-            ),
-            None,
-        )
-        if index is None:
-            not_found = True
-            return
-        removed = state["conversations"].pop(index)
-        if state.get("activeConversationId") == removed["id"]:
-            state["activeConversationId"] = state["conversations"][0]["id"] if state["conversations"] else None
-
-    update_store(mutate)
-    if not_found:
+    owner = get_current_username() or "admin"
+    if not _delete_conversation_row(conversation_id, owner):
         return json_error("Conversation not found", 404)
     return jsonify({"ok": True})
 
@@ -1193,31 +1588,24 @@ def post_message(conversation_id):
         return json_error("Invalid model", 400, availableModels=sorted(SUPPORTED_CHAT_MODELS))
     if image and model != IMAGE_INPUT_MODEL:
         return json_error("Image input is only available with Sol", 400)
-    conversation_missing = False
-    upstream_messages = None
 
-    def append_user_message(state):
-        nonlocal conversation_missing
-        nonlocal upstream_messages
-        conversation = get_conversation(state, conversation_id)
-        if conversation is None:
-            conversation_missing = True
-            return
-        user_message = {"role": "user", "content": content}
-        if image:
-            user_message["image"] = image
-        conversation["messages"].append(user_message)
-        conversation["updatedAt"] = now_ts()
-        state["activeConversationId"] = conversation["id"]
-        upstream_messages = [
-            {"role": "system", "content": build_system_prompt(state["profile"])},
-            *(upstream_message(message) for message in conversation["messages"]),
-        ]
-        sort_conversations(state)
-
-    update_store(append_user_message)
-    if conversation_missing:
+    owner = get_current_username() or "admin"
+    meta = _load_conversation_meta(conversation_id, owner)
+    if meta is None:
         return json_error("Conversation not found", 404)
+
+    messages = _load_conversation_messages(conversation_id, owner)
+    user_message = {"role": "user", "content": content}
+    if image:
+        user_message["image"] = image
+    messages.append(user_message)
+
+    upstream_messages = [
+        {"role": "system", "content": build_system_prompt(_get_profile(owner))},
+        *(upstream_message(m) for m in messages),
+    ]
+
+    _append_message_to_conversation(conversation_id, user_message, owner)
 
     try:
         if wants_image_generation(content):
@@ -1244,29 +1632,17 @@ def post_message(conversation_id):
             assistant_content = "پاسخی دریافت نشد."
         assistant_message["content"] = assistant_content
 
-        def append_assistant_message(state):
-            conversation = get_conversation(state, conversation_id)
-            if conversation is None:
-                return None
-            conversation["messages"].append(assistant_message)
-            conversation["updatedAt"] = now_ts()
-            if len(conversation["messages"]) == 2:
-                first_user_message = next(
-                    (message for message in conversation["messages"] if message["role"] == "user"),
-                    None,
-                )
-                if first_user_message:
-                    title = generate_conversation_title(str(first_user_message.get("content") or ""))
-                    if title and len(title) <= 30:
-                        conversation["title"] = title
-            state["activeConversationId"] = conversation["id"]
-            sort_conversations(state)
-            return conversation["id"]
+        title_update = None
+        if len(messages) == 1:
+            title = generate_conversation_title(content)
+            if title and len(title) <= 30:
+                title_update = title
 
-        state, updated_id = update_store(append_assistant_message)
-        conversation = get_conversation(state, updated_id)
+        _append_message_to_conversation(conversation_id, assistant_message, owner, model_id=model, title=title_update)
+
+        updated_meta = _load_conversation_meta(conversation_id, owner)
         response_payload = {
-            "conversation": serialize_conversation(conversation),
+            "conversation": serialize_conversation(updated_meta),
             "assistantMessage": assistant_message,
         }
         if status_code >= 400:
@@ -1278,24 +1654,14 @@ def post_message(conversation_id):
             "role": "assistant",
             "content": f"خطا در دریافت پاسخ.\n\n{str(exc) or 'Unknown upstream request failure'}",
         }
-
-        def append_network_error(state):
-            conversation = get_conversation(state, conversation_id)
-            if conversation is None:
-                return None
-            conversation["messages"].append(assistant_message)
-            conversation["updatedAt"] = now_ts()
-            sort_conversations(state)
-            return conversation["id"]
-
-        state, updated_id = update_store(append_network_error)
-        conversation = get_conversation(state, updated_id)
+        _append_message_to_conversation(conversation_id, assistant_message, owner)
+        updated_meta = _load_conversation_meta(conversation_id, owner)
         return (
             jsonify(
                 {
                     "error": "Upstream request failed",
                     "details": str(exc),
-                    "conversation": serialize_conversation(conversation),
+                    "conversation": serialize_conversation(updated_meta),
                     "assistantMessage": assistant_message,
                 }
             ),
@@ -1320,28 +1686,24 @@ def stream_message(conversation_id):
         return json_error("Invalid model", 400)
     if image and model != IMAGE_INPUT_MODEL:
         return json_error("Image input is only available with Sol", 400)
-    context_data = {"messages": None, "missing": False}
 
-    def append_user(state):
-        conversation = get_conversation(state, conversation_id)
-        if conversation is None:
-            context_data["missing"] = True
-            return
-        user_message = {"role": "user", "content": content, "_id": client_message_id or f"user_{now_ts()}_{secrets.token_hex(3)}"}
-        if image:
-            user_message["image"] = image
-        conversation["messages"].append(user_message)
-        conversation["updatedAt"] = now_ts()
-        if conversation.get("modelId") != model:
-            conversation["modelId"] = model
-        state["activeConversationId"] = conversation["id"]
-        context_data["messages"] = [{"role": "system", "content": build_system_prompt(state["profile"])}, *(upstream_message(message) for message in conversation["messages"])]
-        context_data["userMessageId"] = user_message["_id"]
-        sort_conversations(state)
-
-    update_store(append_user)
-    if context_data["missing"]:
+    owner = get_current_username() or "admin"
+    meta = _load_conversation_meta(conversation_id, owner)
+    if meta is None:
         return json_error("Conversation not found", 404)
+
+    messages = _load_conversation_messages(conversation_id, owner)
+    user_message = {"role": "user", "content": content, "_id": client_message_id or f"user_{now_ts()}_{secrets.token_hex(3)}"}
+    if image:
+        user_message["image"] = image
+    messages.append(user_message)
+
+    context_messages = [
+        {"role": "system", "content": build_system_prompt(_get_profile(owner))},
+        *(upstream_message(m) for m in messages),
+    ]
+
+    _append_message_to_conversation(conversation_id, user_message, owner, model_id=model)
 
     def sse(event, data):
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -1361,7 +1723,7 @@ def stream_message(conversation_id):
                 response = requests.post(
                     GAPGPT_API_URL,
                     headers={"Content-Type": "application/json", "Authorization": f"Bearer {GAPGPT_API_KEY}"},
-                    json={"model": model, "messages": context_data["messages"], "stream": True},
+                    json={"model": model, "messages": context_messages, "stream": True},
                     timeout=120,
                     stream=True,
                 )
@@ -1388,33 +1750,30 @@ def stream_message(conversation_id):
                             full_content += delta
                             yield sse("delta", {"content": delta})
                     if not full_content:
-                        status, fallback = request_upstream_chat(context_data["messages"], model)
+                        status, fallback = request_upstream_chat(context_messages, model)
                         full_content = extract_assistant_content(fallback) or "پاسخی دریافت نشد."
                         yield sse("delta", {"content": full_content})
+
             assistant_message = {
                 "role": "assistant",
                 "content": full_content or "پاسخی دریافت نشد.",
                 "_id": f"assistant_{now_ts()}_{secrets.token_hex(3)}",
-                "_parentId": context_data.get("userMessageId", ""),
+                "_parentId": user_message["_id"],
             }
             if image_url:
                 assistant_message["imageUrl"] = image_url
 
-            def append_assistant(state):
-                conversation = get_conversation(state, conversation_id)
-                if conversation is None:
-                    return None
-                conversation["messages"].append(assistant_message)
-                conversation["updatedAt"] = now_ts()
-                if len(conversation["messages"]) == 2:
-                    title = generate_conversation_title(content)
-                    if title and len(title) <= 30:
-                        conversation["title"] = title
-                sort_conversations(state)
-                return conversation
+            title_update = None
+            if len(messages) == 1:
+                title = generate_conversation_title(content)
+                if title and len(title) <= 30:
+                    title_update = title
 
-            state, conversation = update_store(append_assistant)
-            yield sse("done", {"conversation": serialize_conversation(conversation), "assistantMessage": assistant_message})
+            _append_message_to_conversation(conversation_id, assistant_message, owner, title=title_update)
+
+            updated_meta = _load_conversation_meta(conversation_id, owner)
+            updated_meta["messages"] = _load_conversation_messages(conversation_id, owner)
+            yield sse("done", {"conversation": serialize_conversation(updated_meta), "assistantMessage": assistant_message})
         except requests.RequestException as exc:
             yield sse("error", {"message": str(exc) or "خطا در دریافت پاسخ"})
 
