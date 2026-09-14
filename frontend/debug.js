@@ -5,9 +5,7 @@
 
   var params = new URLSearchParams(window.location.search);
   var DEBUG_ENABLED =
-    params.get("debug") === "1" ||
-    params.get("debug") === "true" ||
-    params.get("d") === "1";
+    params.get("debug") === "1" || params.get("debug") === "true" || params.get("d") === "1";
 
   var MAX_ENTRIES = 500;
   var PANEL_STATE_KEY = "gapino-debug-panel-state";
@@ -15,7 +13,7 @@
   var originalConsole = {
     log: typeof console.log === "function" ? console.log.bind(console) : null,
     warn: typeof console.warn === "function" ? console.warn.bind(console) : null,
-    error: typeof console.error === "function" ? console.error.bind(console) : null
+    error: typeof console.error === "function" ? console.error.bind(console) : null,
   };
 
   window.__GapinoDebugEnabled = DEBUG_ENABLED;
@@ -38,13 +36,13 @@
             return {
               name: item.name,
               message: item.message,
-              stack: item.stack
+              stack: item.stack,
             };
           }
 
           return item;
         },
-        2
+        2,
       );
     } catch (error) {
       try {
@@ -59,9 +57,7 @@
     return Array.prototype.slice
       .call(args)
       .map(function (item) {
-        return typeof item === "string"
-          ? item
-          : safeStringify(item);
+        return typeof item === "string" ? item : safeStringify(item);
       })
       .join(" ");
   }
@@ -69,11 +65,15 @@
   function formatTime(timestamp) {
     var date = new Date(timestamp || Date.now());
 
-    return [
-      String(date.getHours()).padStart(2, "0"),
-      String(date.getMinutes()).padStart(2, "0"),
-      String(date.getSeconds()).padStart(2, "0")
-    ].join(":") + "." + String(date.getMilliseconds()).padStart(3, "0");
+    return (
+      [
+        String(date.getHours()).padStart(2, "0"),
+        String(date.getMinutes()).padStart(2, "0"),
+        String(date.getSeconds()).padStart(2, "0"),
+      ].join(":") +
+      "." +
+      String(date.getMilliseconds()).padStart(3, "0")
+    );
   }
 
   function normalizeType(type) {
@@ -90,13 +90,12 @@
       message: message == null ? "" : String(message),
       meta: meta == null ? "" : String(meta),
       stack: stack == null ? "" : String(stack),
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
   }
 
   function trimQueue() {
-    var overflow =
-      window.__gapinoDebugQueue.length - MAX_ENTRIES;
+    var overflow = window.__gapinoDebugQueue.length - MAX_ENTRIES;
 
     if (overflow > 0) {
       window.__gapinoDebugQueue.splice(0, overflow);
@@ -462,28 +461,26 @@
 
   function buildEntryElement(item) {
     var entry = createElement("div", {
-      className:
-        "gapino-debug-entry " +
-        normalizeType(item.type)
+      className: "gapino-debug-entry " + normalizeType(item.type),
     });
 
     var header = createElement("div", {
-      className: "gapino-debug-entry-header"
+      className: "gapino-debug-entry-header",
     });
 
     var type = createElement("span", {
       className: "gapino-debug-entry-type",
-      text: normalizeType(item.type)
+      text: normalizeType(item.type),
     });
 
     var time = createElement("time", {
       className: "gapino-debug-entry-time",
-      text: formatTime(item.timestamp)
+      text: formatTime(item.timestamp),
     });
 
     var message = createElement("div", {
       className: "gapino-debug-message",
-      text: item.message || ""
+      text: item.message || "",
     });
 
     header.appendChild(type);
@@ -496,8 +493,8 @@
       entry.appendChild(
         createElement("div", {
           className: "gapino-debug-meta",
-          text: item.meta
-        })
+          text: item.meta,
+        }),
       );
     }
 
@@ -505,8 +502,8 @@
       entry.appendChild(
         createElement("div", {
           className: "gapino-debug-stack",
-          text: item.stack
-        })
+          text: item.stack,
+        }),
       );
     }
 
@@ -527,8 +524,8 @@
         total: 0,
         log: 0,
         warn: 0,
-        error: 0
-      }
+        error: 0,
+      },
     );
   }
 
@@ -553,8 +550,7 @@
 
     if (badge) {
       badge.textContent = String(counts.error);
-      badge.dataset.visible =
-        counts.error > 0 ? "true" : "false";
+      badge.dataset.visible = counts.error > 0 ? "true" : "false";
     }
   }
 
@@ -575,8 +571,8 @@
       body.appendChild(
         createElement("div", {
           id: "gapino-debug-empty",
-          text: "No debug entries"
-        })
+          text: "No debug entries",
+        }),
       );
     }
   }
@@ -612,7 +608,7 @@
       id: id,
       text: text,
       title: title,
-      type: "button"
+      type: "button",
     });
   }
 
@@ -622,7 +618,7 @@
         var parts = [
           "[" + formatTime(item.timestamp) + "]",
           "[" + normalizeType(item.type).toUpperCase() + "]",
-          item.message || ""
+          item.message || "",
         ];
 
         if (item.meta) {
@@ -681,10 +677,7 @@
       return;
     }
 
-    if (
-      navigator.clipboard &&
-      typeof navigator.clipboard.writeText === "function"
-    ) {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
       navigator.clipboard
         .writeText(text)
         .then(function () {
@@ -712,20 +705,13 @@
 
     if (!panel || !launcher) return;
 
-    var normalizedState =
-      state === "hidden" || state === "minimized"
-        ? state
-        : "visible";
+    var normalizedState = state === "hidden" || state === "minimized" ? state : "visible";
 
     panel.dataset.state = normalizedState;
-    launcher.dataset.visible =
-      normalizedState === "hidden" ? "true" : "false";
+    launcher.dataset.visible = normalizedState === "hidden" ? "true" : "false";
 
     if (minimizeButton) {
-      minimizeButton.textContent =
-        normalizedState === "minimized"
-          ? "Expand"
-          : "Minimize";
+      minimizeButton.textContent = normalizedState === "minimized" ? "Expand" : "Minimize";
     }
 
     setPanelState(normalizedState);
@@ -745,11 +731,7 @@
 
     if (!panel) return;
 
-    applyPanelState(
-      panel.dataset.state === "minimized"
-        ? "visible"
-        : "minimized"
-    );
+    applyPanelState(panel.dataset.state === "minimized" ? "visible" : "minimized");
   }
 
   function togglePanel() {
@@ -777,16 +759,16 @@
     var launcher = createElement("button", {
       id: "gapino-debug-launcher",
       type: "button",
-      title: "Show Gapino debug console"
+      title: "Show Gapino debug console",
     });
 
     var label = createElement("span", {
-      text: "DEBUG"
+      text: "DEBUG",
     });
 
     var badge = createElement("span", {
       id: "gapino-debug-launcher-badge",
-      text: "0"
+      text: "0",
     });
 
     launcher.appendChild(label);
@@ -814,74 +796,62 @@
     }
 
     var panel = createElement("div", {
-      id: "gapino-debug-panel"
+      id: "gapino-debug-panel",
     });
 
     var header = createElement("div", {
-      id: "gapino-debug-header"
+      id: "gapino-debug-header",
     });
 
     var headerInfo = createElement("div", {
-      id: "gapino-debug-header-info"
+      id: "gapino-debug-header-info",
     });
 
     var title = createElement("span", {
       id: "gapino-debug-title",
-      text: "GAPINO DEBUG"
+      text: "GAPINO DEBUG",
     });
 
     var counters = createElement("div", {
-      id: "gapino-debug-counters"
+      id: "gapino-debug-counters",
     });
 
     var totalCount = createElement("span", {
       id: "gapino-debug-total-count",
       className: "gapino-debug-counter",
-      text: "0"
+      text: "0",
     });
 
     var warnCount = createElement("span", {
       id: "gapino-debug-warn-count",
       className: "gapino-debug-counter",
-      text: "W 0"
+      text: "W 0",
     });
 
     var errorCount = createElement("span", {
       id: "gapino-debug-error-count",
       className: "gapino-debug-counter",
-      text: "E 0"
+      text: "E 0",
     });
 
     var actions = createElement("div", {
-      id: "gapino-debug-header-actions"
+      id: "gapino-debug-header-actions",
     });
 
-    var copyButton = createButton(
-      "gapino-debug-copy",
-      "Copy",
-      "Copy all debug entries"
-    );
+    var copyButton = createButton("gapino-debug-copy", "Copy", "Copy all debug entries");
 
-    var clearButton = createButton(
-      "gapino-debug-clear",
-      "Clear",
-      "Clear all debug entries"
-    );
+    var clearButton = createButton("gapino-debug-clear", "Clear", "Clear all debug entries");
 
     var minimizeButton = createButton(
       "gapino-debug-minimize",
       "Minimize",
-      "Minimize debug console"
+      "Minimize debug console",
     );
 
-    var hideButton = createButton(
-      "gapino-debug-hide",
-      "Hide",
-      "Hide debug console"
-    );
+    var hideButton = createButton("gapino-debug-hide", "Hide", "Hide debug console");
 
     var body = createElement("div", {
-      id: "gapino-debug-body"
+      id: "gapino-debug-body",
     });
 
     counters.appendChild(totalCount);
@@ -964,12 +934,7 @@
   };
 
   window.__gapinoDebugError = function (message, meta, stack) {
-    return appendEntry(
-      "error",
-      message,
-      meta || "",
-      stack || ""
-    );
+    return appendEntry("error", message, meta || "", stack || "");
   };
 
   window.__gapinoDebug = {
@@ -984,16 +949,12 @@
     },
     copy: function () {
       return formatEntriesForClipboard();
-    }
+    },
   };
 
   if (DEBUG_ENABLED) {
     console.log = function () {
-      appendEntry(
-        "log",
-        joinArgs(arguments),
-        "[console.log]"
-      );
+      appendEntry("log", joinArgs(arguments), "[console.log]");
 
       if (originalConsole.log) {
         originalConsole.log.apply(null, arguments);
@@ -1001,11 +962,7 @@
     };
 
     console.warn = function () {
-      appendEntry(
-        "warn",
-        joinArgs(arguments),
-        "[console.warn]"
-      );
+      appendEntry("warn", joinArgs(arguments), "[console.warn]");
 
       if (originalConsole.warn) {
         originalConsole.warn.apply(null, arguments);
@@ -1013,11 +970,7 @@
     };
 
     console.error = function () {
-      appendEntry(
-        "error",
-        joinArgs(arguments),
-        "[console.error]"
-      );
+      appendEntry("error", joinArgs(arguments), "[console.error]");
 
       if (originalConsole.error) {
         originalConsole.error.apply(null, arguments);
@@ -1031,60 +984,36 @@
       if (!DEBUG_ENABLED) return;
 
       var location =
-        (event.filename || "[inline]") +
-        ":" +
-        (event.lineno || 0) +
-        ":" +
-        (event.colno || 0);
+        (event.filename || "[inline]") + ":" + (event.lineno || 0) + ":" + (event.colno || 0);
 
       appendEntry(
         "error",
         event.message || "Unhandled error",
         location,
-        event.error && event.error.stack
-          ? event.error.stack
-          : ""
+        event.error && event.error.stack ? event.error.stack : "",
       );
     },
-    true
+    true,
   );
 
-  window.addEventListener(
-    "unhandledrejection",
-    function (event) {
-      if (!DEBUG_ENABLED) return;
+  window.addEventListener("unhandledrejection", function (event) {
+    if (!DEBUG_ENABLED) return;
 
-      var reason = event.reason;
+    var reason = event.reason;
 
-      var message =
-        reason && reason.message
-          ? reason.message
-          : "Unhandled promise rejection";
+    var message = reason && reason.message ? reason.message : "Unhandled promise rejection";
 
-      var stack =
-        reason && reason.stack
-          ? reason.stack
-          : safeStringify(reason);
+    var stack = reason && reason.stack ? reason.stack : safeStringify(reason);
 
-      appendEntry(
-        "error",
-        message,
-        "[unhandled promise]",
-        stack
-      );
-    }
-  );
+    appendEntry("error", message, "[unhandled promise]", stack);
+  });
 
   window.addEventListener("keydown", function (event) {
     if (!DEBUG_ENABLED) return;
 
     var modifier = event.ctrlKey || event.metaKey;
 
-    if (
-      modifier &&
-      event.shiftKey &&
-      String(event.key).toLowerCase() === "d"
-    ) {
+    if (modifier && event.shiftKey && String(event.key).toLowerCase() === "d") {
       event.preventDefault();
       togglePanel();
     }
@@ -1095,20 +1024,12 @@
 
     ensurePanel();
 
-    appendEntry(
-      "log",
-      "Debug panel initialized",
-      window.location.href
-    );
+    appendEntry("log", "Debug panel initialized", window.location.href);
   }
 
   if (DEBUG_ENABLED) {
     if (document.readyState === "loading") {
-      document.addEventListener(
-        "DOMContentLoaded",
-        bootDebugPanel,
-        { once: true }
-      );
+      document.addEventListener("DOMContentLoaded", bootDebugPanel, { once: true });
     } else {
       bootDebugPanel();
     }

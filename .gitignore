@@ -1,12 +1,22 @@
+# Environment
 .env
+
+# Python
 __pycache__/
 *.py[cod]
-*.sqlite3
-backend/data/database.db
 .venv/
 venv/
+.ruff_cache/
+
+# Node / frontend build output
 node_modules/
 frontend/vendor/
+
+# Local database
+*.sqlite3
+backend/data/database.db
+
+# Editors / OS
 .DS_Store
 *.log
 *.backup

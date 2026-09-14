@@ -1,12 +1,17 @@
 {
   "scripts": {
     "build": "node scripts/copy-vendor.js",
-    "build:vendor": "node scripts/copy-vendor.js"
+    "build:vendor": "node scripts/copy-vendor.js",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@highlightjs/cdn-assets": "^11.11.1",
-    "highlight.js": "^11.11.1",
     "markdown-it": "^14.1.0",
-    "markdown-it-task-lists": "^2.1.1"
+    "markdown-it-task-lists": "^2.1.1",
+    "mathjax": "^3.2.2"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6"
   }
 }

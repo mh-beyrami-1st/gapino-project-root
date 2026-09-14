@@ -1,0 +1,7 @@
+node_modules/
+venv/
+.venv/
+frontend/vendor/
+frontend/fonts/
+package-lock.json
+*.log

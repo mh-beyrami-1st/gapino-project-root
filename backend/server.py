@@ -1,18 +1,28 @@
+import base64
 import hmac
 import json
 import os
 import secrets
-import psycopg2
-import psycopg2.extras
-import psycopg2.pool
 import time
-import base64
 from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
+
+import psycopg2
+import psycopg2.extras
+import psycopg2.pool
 import requests
 from dotenv import load_dotenv
-from flask import Flask, Response, g, jsonify, redirect, request, send_from_directory, stream_with_context
+from flask import (
+    Flask,
+    Response,
+    g,
+    jsonify,
+    redirect,
+    request,
+    send_from_directory,
+    stream_with_context,
+)
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 load_dotenv()
@@ -31,7 +41,7 @@ STATE_CACHE = {}
 STATE_CACHE_TTL = 30.0
 STATE_CACHE_LOCK = RLock()
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 DEFAULT_MODEL_ID = "gpt-5.6-sol"
 
 
@@ -39,10 +49,12 @@ app = Flask(__name__, static_folder=None)
 app.json.ensure_ascii = False
 
 PORT = int(os.getenv("PORT", 3000))
-HOST = "0.0.0.0"
+HOST = os.getenv("HOST", "0.0.0.0")
 GAPGPT_API_KEY = os.getenv("GAPGPT_API_KEY")
 GAPGPT_API_URL = os.getenv("GAPGPT_API_URL")
-IMAGE_GENERATION_API_URL = os.getenv("IMAGE_GENERATION_API_URL") or (GAPGPT_API_URL or "").replace("/chat/completions", "/images/generations")
+IMAGE_GENERATION_API_URL = os.getenv("IMAGE_GENERATION_API_URL") or (GAPGPT_API_URL or "").replace(
+    "/chat/completions", "/images/generations"
+)
 PROMPT_MODEL = "gemini-3.1-flash-lite"
 SESSION_TTL = 60 * 60 * 24 * 30
 SESSION_COOKIE_NAME = "gapino_session"
@@ -160,6 +172,9 @@ def database_connection():
             if raw.closed:
                 pool.putconn(raw, close=True)
                 raw = pool.getconn()
+        except Exception:
+            raw = None
+        if raw is not None:
             wrapper = PostgreSQLConnection(raw)
             try:
                 yield wrapper
@@ -182,8 +197,6 @@ def database_connection():
                     except Exception:
                         pass
             return
-        except Exception:
-            pass
 
     connection = None
     in_request = False
@@ -257,8 +270,7 @@ def initialize_database():
         return
     with database_connection() as connection:
         with connection.cursor() as cursor:
-            cursor.execute(
-                """
+            cursor.execute("""
             CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
                 owner_username TEXT NOT NULL DEFAULT 'admin',
@@ -298,8 +310,7 @@ def initialize_database():
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_expires
                 ON sessions(expires_at);
-                """
-            )
+                """)
             cursor.execute(
                 "SELECT table_name, column_name FROM information_schema.columns "
                 "WHERE table_schema = 'public' AND table_name IN ('messages', 'conversations', 'sessions')"
@@ -326,6 +337,13 @@ def initialize_database():
                 cursor.execute("ALTER TABLE messages ADD COLUMN message_key TEXT")
             if "parent_key" not in message_columns:
                 cursor.execute("ALTER TABLE messages ADD COLUMN parent_key TEXT")
+            cursor.execute(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'messages' AND column_name = 'timestamp'"
+            )
+            timestamp_column = cursor.fetchone()
+            if timestamp_column and timestamp_column["data_type"] != "bigint":
+                cursor.execute("ALTER TABLE messages ALTER COLUMN timestamp TYPE BIGINT")
             cursor.execute(
                 "INSERT INTO app_state (key, value) VALUES (%s, %s) "
                 "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
@@ -1155,9 +1173,23 @@ def wants_image_generation(content):
     text = str(content or "").lower()
     image_words = ("عکس", "تصویر", "تصویری", "image", "photo", "picture", "artwork")
     request_words = (
-        "بساز", "بسازید", "ساخت", "تولید", "درست کن", "درستش کن",
-        "بکش", "طراحی کن", "رندر کن", "میخوام", "می‌خوام", "می خواهم",
-        "generate", "create", "make", "draw", "render",
+        "بساز",
+        "بسازید",
+        "ساخت",
+        "تولید",
+        "درست کن",
+        "درستش کن",
+        "بکش",
+        "طراحی کن",
+        "رندر کن",
+        "میخوام",
+        "می‌خوام",
+        "می خواهم",
+        "generate",
+        "create",
+        "make",
+        "draw",
+        "render",
     )
     return any(word in text for word in image_words) and any(word in text for word in request_words)
 
@@ -1241,10 +1273,10 @@ def generate_conversation_title(user_content):
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a title generator. Read the user's first message and generate a short, concise title in Persian for the conversation. The title must be a noun phrase, no more than 10 words, and strictly under 30 characters. Only output the title, nothing else."
+                        "content": "You are a title generator. Read the user's first message and generate a short, concise title in Persian for the conversation. The title must be a noun phrase, no more than 10 words, and strictly under 30 characters. Only output the title, nothing else.",
                     },
-                    {"role": "user", "content": f"Generate title for this first message: {user_content}"}
-                ]
+                    {"role": "user", "content": f"Generate title for this first message: {user_content}"},
+                ],
             },
             timeout=15,
         )
@@ -1333,13 +1365,21 @@ def chat_page(_chat_path=None):
         chat_segment = _chat_path.rsplit("/", 1)[0]
         conversation_id = chat_segment.strip()
         conversation = next(
-            (item for item in load_store().get("conversations", []) if "".join(char for char in item["id"] if char.isdigit()) == conversation_id),
+            (
+                item
+                for item in load_store().get("conversations", [])
+                if "".join(char for char in item["id"] if char.isdigit()) == conversation_id
+            ),
             None,
         )
         if conversation is None:
             return json_error("Conversation not found", 404)
         image_url = next(
-            (message.get("imageUrl") for message in reversed(conversation.get("messages") or []) if message.get("imageUrl")),
+            (
+                message.get("imageUrl")
+                for message in reversed(conversation.get("messages") or [])
+                if message.get("imageUrl")
+            ),
             "",
         )
         if not image_url:
@@ -1618,15 +1658,18 @@ def post_message(conversation_id):
                 assistant_content = "تصویر آماده شد."
             elif status_code < 400:
                 assistant_content = "تصویر تولید شد، اما نشانی فایل در پاسخ سرویس موجود نبود."
-            assistant_message = {"role": "assistant", "content": assistant_content, **({"imageUrl": image_url} if image_url else {})}
+            assistant_message = {
+                "role": "assistant",
+                "content": assistant_content,
+                **({"imageUrl": image_url} if image_url else {}),
+            }
         else:
             status_code, data = request_upstream_chat(upstream_messages, model=model)
             assistant_content = extract_assistant_content(data)
             assistant_message = {"role": "assistant", "content": assistant_content}
         if status_code >= 400:
             assistant_content = (
-                f"خطا در دریافت پاسخ از سرویس مدل.\n\n"
-                f"Status: {status_code}\nDetails: {assistant_content or data}"
+                f"خطا در دریافت پاسخ از سرویس مدل.\n\n" f"Status: {status_code}\nDetails: {assistant_content or data}"
             )
         if not assistant_content:
             assistant_content = "پاسخی دریافت نشد."
@@ -1693,7 +1736,11 @@ def stream_message(conversation_id):
         return json_error("Conversation not found", 404)
 
     messages = _load_conversation_messages(conversation_id, owner)
-    user_message = {"role": "user", "content": content, "_id": client_message_id or f"user_{now_ts()}_{secrets.token_hex(3)}"}
+    user_message = {
+        "role": "user",
+        "content": content,
+        "_id": client_message_id or f"user_{now_ts()}_{secrets.token_hex(3)}",
+    }
     if image:
         user_message["image"] = image
     messages.append(user_message)
@@ -1733,7 +1780,9 @@ def stream_message(conversation_id):
                         details = response.json()
                     except ValueError:
                         details = response.text
-                    full_content = f"خطا در دریافت پاسخ از سرویس مدل.\n\nStatus: {response.status_code}\nDetails: {details}"
+                    full_content = (
+                        f"خطا در دریافت پاسخ از سرویس مدل.\n\nStatus: {response.status_code}\nDetails: {details}"
+                    )
                     yield sse("delta", {"content": full_content})
                 else:
                     for line in response.iter_lines(decode_unicode=True):
@@ -1773,11 +1822,17 @@ def stream_message(conversation_id):
 
             updated_meta = _load_conversation_meta(conversation_id, owner)
             updated_meta["messages"] = _load_conversation_messages(conversation_id, owner)
-            yield sse("done", {"conversation": serialize_conversation(updated_meta), "assistantMessage": assistant_message})
+            yield sse(
+                "done", {"conversation": serialize_conversation(updated_meta), "assistantMessage": assistant_message}
+            )
         except requests.RequestException as exc:
             yield sse("error", {"message": str(exc) or "خطا در دریافت پاسخ"})
+        except Exception as exc:  # pragma: no cover - defensive, keeps the SSE stream intact
+            yield sse("error", {"message": str(exc) or "خطای نامشخص در پردازش پاسخ"})
 
-    return Response(generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return Response(
+        generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
 
 
 @app.post("/api/chat")

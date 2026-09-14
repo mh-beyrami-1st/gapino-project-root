@@ -1,226 +1,467 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fa" dir="rtl">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="Gapino" />
-  <link rel="manifest" href="/manifest.json" />
-  <link rel="icon" type="image/png" href="/logo.png" />
-  <link rel="apple-touch-icon" href="/logo.png" />
-  <meta name="color-scheme" content="light dark" />
-  <title>Gapino - AI Chat</title>
-  <script>
-    try {
-      const theme = localStorage.getItem("gapino.theme") || "auto";
-      document.documentElement.dataset.theme = theme;
-    } catch {}
-  </script>
-   <link rel="stylesheet" href="/style.css" />
-  <link rel="stylesheet" href="/vendor/highlight-github-dark.min.css" />
-  <script defer src="/vendor/markdown-it.min.js"></script>
-  <script defer src="/vendor/markdown-it-task-lists.min.js"></script>
-  <script defer src="/vendor/highlight.min.js"></script>
-  <script>
-    window.MathJax = {
-      tex: {
-        inlineMath: [['$', '$'], ['\\(', '\\)']],
-        displayMath: [['$$', '$$'], ['\\[', '\\]']],
-        processEscapes: true,
-        processEnvironments: true,
-        packages: { '[+]': ['ams', 'newcommand', 'configmacros'] }
-      },
-      options: {
-        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
-        ignoreHtmlClass: 'tex2jax_ignore',
-        processHtmlClass: 'tex2jax_process'
-      },
-      svg: {
-        fontCache: 'global'
-      }
-    };
-  </script>
-  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-  <script defer src="/app.js"></script>
-  <script defer src="/debug.js"></script>
-</head>
-<body>
-  <div id="pinGate" class="pin-gate" aria-hidden="false">
-    <form id="pinForm" class="pin-card" autocomplete="on">
-      <div class="pin-logo-wrap" aria-hidden="true">
-        <span class="pin-logo-glow"></span>
-        <img src="/logo.png" alt="Gapino" class="pin-logo" />
-      </div>
-      <h1 class="pin-title">گپینو</h1>
-      <p class="pin-subtitle">برای ورود، نام کاربری و رمز عبور را وارد کنید</p>
-      <input
-        id="usernameInput"
-        class="pin-input"
-        type="text"
-        placeholder="نام کاربری"
-        autocomplete="username"
-        aria-label="نام کاربری"
-      />
-      <input
-        id="passwordInput"
-        class="pin-input password-input"
-        type="password"
-        placeholder="رمز عبور"
-        autocomplete="current-password"
-        aria-label="رمز عبور"
-      />
-      <p id="pinError" class="pin-error" hidden>نام کاربری یا رمز عبور نادرست است</p>
-      <button type="submit" class="primary-btn full" id="pinSubmit">ورود</button>
-    </form>
-  </div>
-
-  <div id="app" class="app" aria-hidden="true">
-    <div id="appToast" class="app-toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
-    <div id="overlay" class="overlay" aria-hidden="true"></div>
-    <aside id="drawer" class="drawer" aria-label="منوی گفتگوها">
-      <header class="drawer-header">
-        <div class="drawer-header-actions">
-          <button type="button" id="closeDrawerBtn" class="icon-btn" aria-label="بستن منو">
-            <svg viewBox="0 0 24 24" class="icon-close" aria-hidden="true">
-              <path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-          <button type="button" id="themeToggle" class="icon-btn theme-toggle" aria-label="تغییر پوسته">
-            <svg viewBox="0 0 24 24" class="theme-icon theme-icon-auto" aria-hidden="true">
-              <path d="M7 4.5h10A2.5 2.5 0 0 1 19.5 7v7A2.5 2.5 0 0 1 17 16.5H7A2.5 2.5 0 0 1 4.5 14V7A2.5 2.5 0 0 1 7 4.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
-              <path d="M9 20h6m-3-3.5V20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-              <path d="M12 7.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" fill="none" stroke="currentColor" stroke-width="1.65" />
-              <path d="M12 6v.5m0 8v.5m-4.5-4.5H8m8 0h.5" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" />
-            </svg>
-            <svg viewBox="0 0 24 24" class="theme-icon theme-icon-light" aria-hidden="true">
-              <circle cx="12" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="1.8" />
-              <path d="M12 2v1M12 21v1M4.22 4.22l.7.7M19.08 19.08l.7.7M2 12h1M21 12h1M4.22 19.78l.7-.7M19.08 4.92l.7-.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-            </svg>
-            <svg viewBox="0 0 24 24" class="theme-icon theme-icon-dark" aria-hidden="true">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Gapino" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <link rel="apple-touch-icon" href="/logo.png" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Gapino - AI Chat</title>
+    <script>
+      try {
+        const theme = localStorage.getItem("gapino.theme") || "auto";
+        document.documentElement.dataset.theme = theme;
+      } catch {}
+    </script>
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/vendor/highlight-github-dark.min.css" />
+    <script defer src="/vendor/markdown-it.min.js"></script>
+    <script defer src="/vendor/markdown-it-task-lists.min.js"></script>
+    <script defer src="/vendor/highlight.min.js"></script>
+    <script>
+      window.MathJax = {
+        tex: {
+          inlineMath: [
+            ["$", "$"],
+            ["\\(", "\\)"],
+          ],
+          displayMath: [
+            ["$$", "$$"],
+            ["\\[", "\\]"],
+          ],
+          processEscapes: true,
+          processEnvironments: true,
+          packages: { "[+]": ["ams", "newcommand", "configmacros"] },
+        },
+        options: {
+          skipHtmlTags: ["script", "noscript", "style", "textarea", "pre", "code"],
+          ignoreHtmlClass: "tex2jax_ignore",
+          processHtmlClass: "tex2jax_process",
+        },
+        svg: {
+          fontCache: "global",
+        },
+      };
+    </script>
+    <script defer src="/vendor/tex-mml-chtml.js"></script>
+    <script defer src="/app.js"></script>
+    <script defer src="/debug.js"></script>
+  </head>
+  <body>
+    <div id="pinGate" class="pin-gate" aria-hidden="false">
+      <form id="pinForm" class="pin-card" autocomplete="on">
+        <div class="pin-logo-wrap" aria-hidden="true">
+          <span class="pin-logo-glow"></span>
+          <img src="/logo.png" alt="Gapino" class="pin-logo" />
         </div>
-        <button type="button" id="newChatBtn" class="primary-btn">گفت‌وگوی جدید</button>
-      </header>
-      <section class="drawer-section">
-        <h2 class="drawer-subtitle">گفت‌وگوها</h2>
-        <ul id="chatList" class="chat-list"></ul>
-      </section>
-      <footer class="drawer-footer">
-        <button type="button" id="logoutBtn" class="drawer-logout-btn">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5m5 5H3m9-8h5a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          <span>خروج از حساب</span>
-        </button>
-      </footer>
-    </aside>
-    <header class="topbar">
-      <button type="button" id="menuBtn" class="icon-btn" aria-label="باز کردن منو">
-        <svg viewBox="0 0 24 24" class="icon-hamburger" aria-hidden="true">
-          <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
-        </svg>
-      </button>
-      <button type="button" class="topbar-title model-picker-trigger" id="modelPickerBtn" aria-haspopup="listbox" aria-expanded="false" aria-label="انتخاب مدل">
-        <span id="topbarTitle">GPT 5.6 Sol</span>
-        <svg class="model-picker-chevron" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="m7 10 5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-      </button>
-      <div id="modelMenu" class="model-menu" role="listbox" aria-label="مدل‌های گفتگو" hidden></div>
-      <button type="button" id="topbarNewChatBtn" class="icon-btn topbar-new-chat-btn" aria-label="گفت‌وگوی جدید" title="گفت‌وگوی جدید">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h10.5A2.5 2.5 0 0 1 18 6v14.5H7.5A2.5 2.5 0 0 1 5 18V3.5Zm2.5 3.2h6M7.5 10h5.3M7.5 13.3h3.2M14 15.8l4.7-4.7 1.6 1.6-4.7 4.7-2.5.9.9-2.5Z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
-      <button type="button" id="profileBtn" class="icon-btn" aria-label="پروفایل و تنظیمات">
-        <svg viewBox="0 0 24 24" class="icon-user" aria-hidden="true">
-          <path d="M12 12.2a4.2 4.2 0 1 0-4.2-4.2 4.2 4.2 0 0 0 4.2 4.2Zm0 2.3c-4.1 0-7.5 2.4-7.5 5.3V21h15v-1.2c0-2.9-3.4-5.3-7.5-5.3Z" fill="currentColor" />
-        </svg>
-      </button>
-    </header>
-    <div id="profileModal" class="modal" aria-hidden="true">
-      <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="profileModalTitle">
-        <div class="modal-header">
-          <h2 id="profileModalTitle">پروفایل و جزئیات</h2>
-          <button type="button" id="closeProfileBtn" class="icon-btn" aria-label="بستن پنجره">
-            <svg viewBox="0 0 24 24" class="icon-close" aria-hidden="true">
-              <path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-        </div>
-        <div class="modal-body">
-          <label class="field">
-            <span class="field-label">نحوهٔ پاسخ‌دهی</span>
-            <textarea id="profileResponseStyle" class="field-textarea" rows="7" placeholder="مثلاً کوتاه، دقیق، مرحله‌به‌مرحله..."></textarea>
-          </label>
-          <label class="field">
-            <span class="field-label">نام</span>
-            <input id="profileName" type="text" class="field-input" placeholder="نام شما" />
-          </label>
-          <label class="field">
-            <span class="field-label">شغل / نقش</span>
-            <input id="profileJob" type="text" class="field-input" placeholder="مثلاً دانشجو" />
-          </label>
-          <label class="field">
-            <span class="field-label">جزئیات کاربر</span>
-            <textarea id="profileSystemPrompt" class="field-textarea" rows="7" placeholder="اطلاعات کاربر..."></textarea>
-          </label>
-        </div>
-        <div class="modal-footer">
-          <button type="button" id="saveProfileBtn" class="primary-btn full">ذخیره</button>
-        </div>
-      </div>
+        <h1 class="pin-title">گپینو</h1>
+        <p class="pin-subtitle">برای ورود، نام کاربری و رمز عبور را وارد کنید</p>
+        <input
+          id="usernameInput"
+          class="pin-input"
+          type="text"
+          placeholder="نام کاربری"
+          autocomplete="username"
+          aria-label="نام کاربری"
+        />
+        <input
+          id="passwordInput"
+          class="pin-input password-input"
+          type="password"
+          placeholder="رمز عبور"
+          autocomplete="current-password"
+          aria-label="رمز عبور"
+        />
+        <p id="pinError" class="pin-error" hidden>نام کاربری یا رمز عبور نادرست است</p>
+        <button type="submit" class="primary-btn full" id="pinSubmit">ورود</button>
+      </form>
     </div>
-    <main id="chatMain" class="chat-main">
-      <section id="emptyState" class="empty-state" aria-label="شروع گفتگو">
-        <div class="empty-text">گپینو؛ هم‌اکنون قدرت گرفته با Ai</div>
-      </section>
-      <section id="messagesSection" class="messages" aria-label="گفت‌وگو"></section>
-    </main>
-    <button type="button" id="scrollToBottomBtn" class="scroll-to-bottom" aria-label="رفتن به پایین" hidden>
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </button>
-    <div class="composer" id="chatComposer">
-      <div id="imagePreview" class="image-preview" hidden>
-        <img id="imagePreviewThumb" alt="پیش‌نمایش تصویر انتخاب‌شده" />
-        <button type="button" id="removeImageBtn" class="image-preview-remove" aria-label="حذف تصویر" title="حذف تصویر">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
-        </button>
-      </div>
-      <div class="composer-inner">
-        <input id="imageInput" class="image-input" type="file" accept="image/*" hidden />
-        <textarea id="userInput" class="composer-input" rows="1" aria-label="نوشتن پیام" placeholder=" "></textarea>
-        <div class="composer-watermark" id="composerWatermark">پیام خود را بنویسید...</div>
-        <div id="modelQuickMenu" class="model-quick-menu" role="dialog" aria-label="تنظیم سرعت و دقت مدل" hidden>
-          <div class="model-slider-track">
-            <input id="modelQuickRange" class="model-quick-range" type="range" min="0" max="2" step="1" value="0" aria-label="سطح دقت مدل">
-          </div>
-          <div id="modelSliderLabels" class="model-slider-labels" aria-hidden="true"></div>
-        </div>
-        <button type="button" id="modelQuickBtn" class="model-more-btn" aria-label="تنظیم سرعت و دقت مدل" aria-haspopup="dialog" aria-expanded="false">
-          <svg viewBox="0 0 24 24" class="icon-more" aria-hidden="true">
-            <circle cx="5" cy="12" r="1.7"></circle>
-            <circle cx="12" cy="12" r="1.7"></circle>
-            <circle cx="19" cy="12" r="1.7"></circle>
-          </svg>
-        </button>
-        <div class="attachment-control">
-          <div id="attachmentMenu" class="attachment-menu" hidden>
-            <button type="button" id="attachmentImageOption" class="attachment-menu-option" aria-label="افزودن تصویر">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8.3" cy="9" r="1.5" fill="currentColor"/><path d="m5.5 17 4.2-4.1 3.1 2.9 2.3-2.2 3.1 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <span>افزودن تصویر</span>
+
+    <div id="app" class="app" aria-hidden="true">
+      <div
+        id="appToast"
+        class="app-toast"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        hidden
+      ></div>
+      <div id="overlay" class="overlay" aria-hidden="true"></div>
+      <aside id="drawer" class="drawer" aria-label="منوی گفتگوها">
+        <header class="drawer-header">
+          <div class="drawer-header-actions">
+            <button type="button" id="closeDrawerBtn" class="icon-btn" aria-label="بستن منو">
+              <svg viewBox="0 0 24 24" class="icon-close" aria-hidden="true">
+                <path
+                  d="M18 6 6 18M6 6l12 12"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              id="themeToggle"
+              class="icon-btn theme-toggle"
+              aria-label="تغییر پوسته"
+            >
+              <svg viewBox="0 0 24 24" class="theme-icon theme-icon-auto" aria-hidden="true">
+                <path
+                  d="M7 4.5h10A2.5 2.5 0 0 1 19.5 7v7A2.5 2.5 0 0 1 17 16.5H7A2.5 2.5 0 0 1 4.5 14V7A2.5 2.5 0 0 1 7 4.5Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linejoin="round"
+                />
+                <path
+                  d="M9 20h6m-3-3.5V20"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
+                <path
+                  d="M12 7.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.65"
+                />
+                <path
+                  d="M12 6v.5m0 8v.5m-4.5-4.5H8m8 0h.5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.55"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <svg viewBox="0 0 24 24" class="theme-icon theme-icon-light" aria-hidden="true">
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                />
+                <path
+                  d="M12 2v1M12 21v1M4.22 4.22l.7.7M19.08 19.08l.7.7M2 12h1M21 12h1M4.22 19.78l.7-.7M19.08 4.92l.7-.7"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <svg viewBox="0 0 24 24" class="theme-icon theme-icon-dark" aria-hidden="true">
+                <path
+                  d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
             </button>
           </div>
-          <button type="button" id="attachImageBtn" class="attach-image-btn" aria-label="افزودن فایل" title="افزودن فایل" aria-haspopup="menu" aria-expanded="false">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <button type="button" id="newChatBtn" class="primary-btn">گفت‌وگوی جدید</button>
+        </header>
+        <section class="drawer-section">
+          <h2 class="drawer-subtitle">گفت‌وگوها</h2>
+          <ul id="chatList" class="chat-list"></ul>
+        </section>
+        <footer class="drawer-footer">
+          <button type="button" id="logoutBtn" class="drawer-logout-btn">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M10 17l5-5-5-5m5 5H3m9-8h5a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>خروج از حساب</span>
           </button>
-        </div>
-        <button type="button" id="sendBtn" class="send-btn" aria-label="ارسال پیام">
-          <svg viewBox="0 0 24 24" class="icon-send" aria-hidden="true">
-            <path d="M12 19V5m0 0 6 6m-6-6-6 6" />
+        </footer>
+      </aside>
+      <header class="topbar">
+        <button type="button" id="menuBtn" class="icon-btn" aria-label="باز کردن منو">
+          <svg viewBox="0 0 24 24" class="icon-hamburger" aria-hidden="true">
+            <path
+              d="M4 7h16M4 12h16M4 17h16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+            />
           </svg>
         </button>
+        <button
+          type="button"
+          class="topbar-title model-picker-trigger"
+          id="modelPickerBtn"
+          aria-haspopup="listbox"
+          aria-expanded="false"
+          aria-label="انتخاب مدل"
+        >
+          <span id="topbarTitle">GPT 5.6 Sol</span>
+          <svg class="model-picker-chevron" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="m7 10 5 5 5-5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+        <div
+          id="modelMenu"
+          class="model-menu"
+          role="listbox"
+          aria-label="مدل‌های گفتگو"
+          hidden
+        ></div>
+        <button
+          type="button"
+          id="topbarNewChatBtn"
+          class="icon-btn topbar-new-chat-btn"
+          aria-label="گفت‌وگوی جدید"
+          title="گفت‌وگوی جدید"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M5 3.5h10.5A2.5 2.5 0 0 1 18 6v14.5H7.5A2.5 2.5 0 0 1 5 18V3.5Zm2.5 3.2h6M7.5 10h5.3M7.5 13.3h3.2M14 15.8l4.7-4.7 1.6 1.6-4.7 4.7-2.5.9.9-2.5Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+        <button type="button" id="profileBtn" class="icon-btn" aria-label="پروفایل و تنظیمات">
+          <svg viewBox="0 0 24 24" class="icon-user" aria-hidden="true">
+            <path
+              d="M12 12.2a4.2 4.2 0 1 0-4.2-4.2 4.2 4.2 0 0 0 4.2 4.2Zm0 2.3c-4.1 0-7.5 2.4-7.5 5.3V21h15v-1.2c0-2.9-3.4-5.3-7.5-5.3Z"
+              fill="currentColor"
+            />
+          </svg>
+        </button>
+      </header>
+      <div id="profileModal" class="modal" aria-hidden="true">
+        <div
+          class="modal-content"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="profileModalTitle"
+        >
+          <div class="modal-header">
+            <h2 id="profileModalTitle">پروفایل و جزئیات</h2>
+            <button type="button" id="closeProfileBtn" class="icon-btn" aria-label="بستن پنجره">
+              <svg viewBox="0 0 24 24" class="icon-close" aria-hidden="true">
+                <path
+                  d="M18 6 6 18M6 6l12 12"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="modal-body">
+            <label class="field">
+              <span class="field-label">نحوهٔ پاسخ‌دهی</span>
+              <textarea
+                id="profileResponseStyle"
+                class="field-textarea"
+                rows="7"
+                placeholder="مثلاً کوتاه، دقیق، مرحله‌به‌مرحله..."
+              ></textarea>
+            </label>
+            <label class="field">
+              <span class="field-label">نام</span>
+              <input id="profileName" type="text" class="field-input" placeholder="نام شما" />
+            </label>
+            <label class="field">
+              <span class="field-label">شغل / نقش</span>
+              <input id="profileJob" type="text" class="field-input" placeholder="مثلاً دانشجو" />
+            </label>
+            <label class="field">
+              <span class="field-label">جزئیات کاربر</span>
+              <textarea
+                id="profileSystemPrompt"
+                class="field-textarea"
+                rows="7"
+                placeholder="اطلاعات کاربر..."
+              ></textarea>
+            </label>
+          </div>
+          <div class="modal-footer">
+            <button type="button" id="saveProfileBtn" class="primary-btn full">ذخیره</button>
+          </div>
+        </div>
+      </div>
+      <main id="chatMain" class="chat-main">
+        <section id="emptyState" class="empty-state" aria-label="شروع گفتگو">
+          <div class="empty-text">گپینو؛ هم‌اکنون قدرت گرفته با Ai</div>
+        </section>
+        <section id="messagesSection" class="messages" aria-label="گفت‌وگو"></section>
+      </main>
+      <button
+        type="button"
+        id="scrollToBottomBtn"
+        class="scroll-to-bottom"
+        aria-label="رفتن به پایین"
+        hidden
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="m6 9 6 6 6-6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </button>
+      <div class="composer" id="chatComposer">
+        <div id="imagePreview" class="image-preview" hidden>
+          <img id="imagePreviewThumb" alt="پیش‌نمایش تصویر انتخاب‌شده" />
+          <button
+            type="button"
+            id="removeImageBtn"
+            class="image-preview-remove"
+            aria-label="حذف تصویر"
+            title="حذف تصویر"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M18 6 6 18M6 6l12 12"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.4"
+                stroke-linecap="round"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="composer-inner">
+          <input id="imageInput" class="image-input" type="file" accept="image/*" hidden />
+          <textarea
+            id="userInput"
+            class="composer-input"
+            rows="1"
+            aria-label="نوشتن پیام"
+            placeholder=" "
+          ></textarea>
+          <div class="composer-watermark" id="composerWatermark">پیام خود را بنویسید...</div>
+          <div
+            id="modelQuickMenu"
+            class="model-quick-menu"
+            role="dialog"
+            aria-label="تنظیم سرعت و دقت مدل"
+            hidden
+          >
+            <div class="model-slider-track">
+              <input
+                id="modelQuickRange"
+                class="model-quick-range"
+                type="range"
+                min="0"
+                max="2"
+                step="1"
+                value="0"
+                aria-label="سطح دقت مدل"
+              />
+            </div>
+            <div id="modelSliderLabels" class="model-slider-labels" aria-hidden="true"></div>
+          </div>
+          <button
+            type="button"
+            id="modelQuickBtn"
+            class="model-more-btn"
+            aria-label="تنظیم سرعت و دقت مدل"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+          >
+            <svg viewBox="0 0 24 24" class="icon-more" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.7"></circle>
+              <circle cx="12" cy="12" r="1.7"></circle>
+              <circle cx="19" cy="12" r="1.7"></circle>
+            </svg>
+          </button>
+          <div class="attachment-control">
+            <div id="attachmentMenu" class="attachment-menu" hidden>
+              <button
+                type="button"
+                id="attachmentImageOption"
+                class="attachment-menu-option"
+                aria-label="افزودن تصویر"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect
+                    x="3.5"
+                    y="4"
+                    width="17"
+                    height="16"
+                    rx="2"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                  />
+                  <circle cx="8.3" cy="9" r="1.5" fill="currentColor" />
+                  <path
+                    d="m5.5 17 4.2-4.1 3.1 2.9 2.3-2.2 3.1 3.4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+                <span>افزودن تصویر</span>
+              </button>
+            </div>
+            <button
+              type="button"
+              id="attachImageBtn"
+              class="attach-image-btn"
+              aria-label="افزودن فایل"
+              title="افزودن فایل"
+              aria-haspopup="menu"
+              aria-expanded="false"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M12 5v14M5 12h14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+          </div>
+          <button type="button" id="sendBtn" class="send-btn" aria-label="ارسال پیام">
+            <svg viewBox="0 0 24 24" class="icon-send" aria-hidden="true">
+              <path d="M12 19V5m0 0 6 6m-6-6-6 6" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
-  </div>
-</body>
+  </body>
 </html>

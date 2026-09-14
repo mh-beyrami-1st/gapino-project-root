@@ -53,7 +53,8 @@ const sendBtnEl = document.getElementById("sendBtn");
 const scrollToBottomBtnEl = document.getElementById("scrollToBottomBtn");
 
 function applyDisplayMode() {
-  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  const isStandalone =
+    window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
   document.documentElement.classList.toggle("standalone", isStandalone);
 }
 applyDisplayMode();
@@ -103,7 +104,9 @@ let scrollSentinelObserver = null;
 let scrollSentinelEl = null;
 let streamRenderRafId = 0;
 
-function nowTs() { return Date.now(); }
+function nowTs() {
+  return Date.now();
+}
 function chatRouteId(chatOrId) {
   const id = typeof chatOrId === "object" ? chatOrId?.id : chatOrId;
   return String(id || "").replace(/\D/g, "") || "0";
@@ -141,13 +144,21 @@ function showToast(message) {
   }, 2200);
 }
 function getSelectedModel() {
-  return MODEL_OPTIONS.find((option) => option.id === selectedModelId) || MODEL_OPTIONS.find((option) => option.id === DEFAULT_MODEL_ID);
+  return (
+    MODEL_OPTIONS.find((option) => option.id === selectedModelId) ||
+    MODEL_OPTIONS.find((option) => option.id === DEFAULT_MODEL_ID)
+  );
 }
 function getProviderForModel(modelId) {
-  return MODEL_PROVIDERS.find((provider) => provider.models.some((model) => model.id === modelId)) || MODEL_PROVIDERS[0];
+  return (
+    MODEL_PROVIDERS.find((provider) => provider.models.some((model) => model.id === modelId)) ||
+    MODEL_PROVIDERS[0]
+  );
 }
 function setSelectedModel(modelId, persist = false) {
-  const option = MODEL_OPTIONS.find((item) => item.id === modelId) || MODEL_OPTIONS.find((item) => item.id === DEFAULT_MODEL_ID);
+  const option =
+    MODEL_OPTIONS.find((item) => item.id === modelId) ||
+    MODEL_OPTIONS.find((item) => item.id === DEFAULT_MODEL_ID);
   const provider = getProviderForModel(option.id);
   selectedModelId = option.id;
 
@@ -184,18 +195,24 @@ function updateModelLockState() {
   const locked = isActiveChatModelLocked() || isSending;
   if (modelPickerBtnEl) {
     modelPickerBtnEl.disabled = locked;
-    modelPickerBtnEl.title = locked ? "مدل پس از شروع گفتگو قفل است" : getProviderForModel(selectedModelId).label;
+    modelPickerBtnEl.title = locked
+      ? "مدل پس از شروع گفتگو قفل است"
+      : getProviderForModel(selectedModelId).label;
   }
   if (modelQuickBtnEl) {
     modelQuickBtnEl.disabled = locked;
-    modelQuickBtnEl.title = locked ? "مدل پس از شروع گفتگو قفل است" : `${getProviderForModel(selectedModelId).label}: ${getSelectedModel().label}`;
+    modelQuickBtnEl.title = locked
+      ? "مدل پس از شروع گفتگو قفل است"
+      : `${getProviderForModel(selectedModelId).label}: ${getSelectedModel().label}`;
   }
   if (locked) {
     closeModelMenu();
     closeModelQuickMenu();
   }
 }
-function modelAcceptsImages() { return Boolean(getSelectedModel()?.acceptsImages); }
+function modelAcceptsImages() {
+  return Boolean(getSelectedModel()?.acceptsImages);
+}
 function updateImageAttachmentAvailability() {
   if (!attachImageBtnEl || !attachmentImageOptionEl) return;
   const enabled = modelAcceptsImages() && !isSending;
@@ -229,7 +246,10 @@ function clearPendingImage() {
   if (imagePreviewEl) imagePreviewEl.hidden = true;
 }
 function showPendingImagePreview(imageDataUrl) {
-  if (!imageDataUrl) { clearPendingImage(); return; }
+  if (!imageDataUrl) {
+    clearPendingImage();
+    return;
+  }
   if (imagePreviewThumbEl) imagePreviewThumbEl.src = imageDataUrl;
   if (imagePreviewEl) imagePreviewEl.hidden = false;
 }
@@ -283,7 +303,10 @@ function renderModelMenu() {
     button.className = "model-option";
     button.dataset.provider = provider.id;
     button.setAttribute("role", "option");
-    button.setAttribute("aria-selected", String(provider.id === getProviderForModel(selectedModelId).id));
+    button.setAttribute(
+      "aria-selected",
+      String(provider.id === getProviderForModel(selectedModelId).id),
+    );
 
     const name = document.createElement("span");
     name.className = "model-option-name";
@@ -303,9 +326,8 @@ function renderModelMenu() {
     button.appendChild(check);
     button.addEventListener("click", () => {
       const currentProvider = getProviderForModel(selectedModelId);
-      const nextModelId = currentProvider.id === provider.id
-        ? selectedModelId
-        : provider.models[0].id;
+      const nextModelId =
+        currentProvider.id === provider.id ? selectedModelId : provider.models[0].id;
       setSelectedModel(nextModelId, true);
       renderModelQuickMenu();
       closeModelMenu();
@@ -317,7 +339,10 @@ function renderModelMenu() {
 function renderModelQuickMenu() {
   if (!modelQuickMenuEl || !modelQuickRangeEl) return;
   const provider = getProviderForModel(selectedModelId);
-  const selectedIndex = Math.max(0, provider.models.findIndex((option) => option.id === selectedModelId));
+  const selectedIndex = Math.max(
+    0,
+    provider.models.findIndex((option) => option.id === selectedModelId),
+  );
   const maxIndex = Math.max(1, provider.models.length - 1);
   modelQuickRangeEl.max = String(maxIndex);
   modelQuickRangeEl.value = String(selectedIndex);
@@ -341,22 +366,37 @@ function normalizeModelId(modelId) {
 }
 function normalizeMessage(message) {
   if (!message || typeof message !== "object") return null;
-  if (message.role !== "user" && message.role !== "assistant" && message.role !== "system") return null;
+  if (message.role !== "user" && message.role !== "assistant" && message.role !== "system")
+    return null;
   const normalized = { role: message.role, content: String(message.content || "") };
-  if (typeof message.image === "string" && message.image.startsWith("data:image/")) normalized.image = message.image;
-  if (typeof message.imageUrl === "string" && (message.imageUrl.startsWith("data:image/") || /^https?:\/\//.test(message.imageUrl))) normalized.imageUrl = message.imageUrl;
+  if (typeof message.image === "string" && message.image.startsWith("data:image/"))
+    normalized.image = message.image;
+  if (
+    typeof message.imageUrl === "string" &&
+    (message.imageUrl.startsWith("data:image/") || /^https?:\/\//.test(message.imageUrl))
+  )
+    normalized.imageUrl = message.imageUrl;
   if (message._id) normalized._id = String(message._id);
   if (message._parentId) normalized._parentId = String(message._parentId);
   return normalized;
 }
 function normalizeProfile(profile) {
   const source = profile && typeof profile === "object" ? profile : {};
-  return { name: String(source.name || ""), job: String(source.job || ""), systemPrompt: String(source.systemPrompt || ""), responseStyle: String(source.responseStyle || "") };
+  return {
+    name: String(source.name || ""),
+    job: String(source.job || ""),
+    systemPrompt: String(source.systemPrompt || ""),
+    responseStyle: String(source.responseStyle || ""),
+  };
 }
-function normalizeTheme(theme) { return THEME_MODES.includes(theme) ? theme : "auto"; }
+function normalizeTheme(theme) {
+  return THEME_MODES.includes(theme) ? theme : "auto";
+}
 function normalizeConversation(conversation) {
   if (!conversation || typeof conversation !== "object") return null;
-  const messages = Array.isArray(conversation.messages) ? conversation.messages.map(normalizeMessage).filter(Boolean) : [];
+  const messages = Array.isArray(conversation.messages)
+    ? conversation.messages.map(normalizeMessage).filter(Boolean)
+    : [];
   return {
     id: String(conversation.id || `${nowTs()}`),
     title: String(conversation.title || "گفت‌وگوی جدید"),
@@ -390,12 +430,21 @@ async function apiRequest(path, options = {}) {
   const init = {
     ...options,
     credentials: "same-origin",
-    headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) },
+    headers: {
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(options.headers || {}),
+    },
   };
   const response = await fetch(path, init);
   const text = await response.text();
   let data = null;
-  if (text) { try { data = JSON.parse(text); } catch { data = { raw: text }; } }
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
+  }
   if (response.status === 401 && !path.startsWith("/api/auth/")) {
     showPinGate();
     const error = new Error("Authentication required");
@@ -404,7 +453,9 @@ async function apiRequest(path, options = {}) {
     throw error;
   }
   if (!response.ok) {
-    const error = new Error((data && data.error) || `Request failed with status ${response.status}`);
+    const error = new Error(
+      (data && data.error) || `Request failed with status ${response.status}`,
+    );
     error.status = response.status;
     error.data = data;
     throw error;
@@ -435,15 +486,24 @@ async function streamApiRequest(path, body, onEvent) {
       const rawData = rawEvent.match(/^data:\s*(.+)$/m)?.[1];
       if (!rawData) continue;
       let payload;
-      try { payload = JSON.parse(rawData); } catch (error) { console.error("Invalid stream event:", error); continue; }
+      try {
+        payload = JSON.parse(rawData);
+      } catch (error) {
+        console.error("Invalid stream event:", error);
+        continue;
+      }
       if (eventName === "error") throw new Error(payload.message || "خطا در دریافت پاسخ");
       onEvent(eventName, payload);
     }
     if (done) break;
   }
 }
-function getProfile() { return { ...currentProfile }; }
-function setProfile(profile) { currentProfile = normalizeProfile(profile); }
+function getProfile() {
+  return { ...currentProfile };
+}
+function setProfile(profile) {
+  currentProfile = normalizeProfile(profile);
+}
 function getResolvedTheme(theme) {
   if (theme === "light") return "light";
   if (theme === "dark") return "dark";
@@ -455,9 +515,19 @@ function applyTheme(theme, persist = false) {
   currentTheme = nextTheme;
   document.documentElement.dataset.theme = nextTheme;
   document.documentElement.dataset.resolvedTheme = resolvedTheme;
-  try { localStorage.setItem("gapino.theme", nextTheme); } catch {}
-  if (themeToggleEl) { themeToggleEl.dataset.theme = nextTheme; themeToggleEl.setAttribute("aria-label", `تم: ${nextTheme}`); themeToggleEl.title = `تم: ${nextTheme}`; }
-  if (persist) { apiRequest("/api/theme", { method: "PATCH", body: JSON.stringify({ theme: nextTheme }) }).catch(console.error); }
+  try {
+    localStorage.setItem("gapino.theme", nextTheme);
+  } catch {}
+  if (themeToggleEl) {
+    themeToggleEl.dataset.theme = nextTheme;
+    themeToggleEl.setAttribute("aria-label", `تم: ${nextTheme}`);
+    themeToggleEl.title = `تم: ${nextTheme}`;
+  }
+  if (persist) {
+    apiRequest("/api/theme", { method: "PATCH", body: JSON.stringify({ theme: nextTheme }) }).catch(
+      console.error,
+    );
+  }
 }
 function cycleTheme() {
   const currentIndex = THEME_MODES.indexOf(currentTheme);
@@ -466,26 +536,36 @@ function cycleTheme() {
 }
 function buildSystemPrompt() {
   const profile = getProfile();
-  const parts = ["You are a precise, helpful, and friendly Persian-language assistant.", "Write answers clearly, practically, and in an organized manner whenever possible."];
+  const parts = [
+    "You are a precise, helpful, and friendly Persian-language assistant.",
+    "Write answers clearly, practically, and in an organized manner whenever possible.",
+  ];
   if (profile.name) parts.push(`User name: ${profile.name}`);
   if (profile.job) parts.push(`User role: ${profile.job}`);
   if (profile.systemPrompt) parts.push(`User custom instructions: ${profile.systemPrompt}`);
   if (profile.responseStyle) parts.push(`Preferred response style: ${profile.responseStyle}`);
   return parts.join("\n");
 }
-function getActiveChat() { return chats.find((chat) => chat.id === activeChatId) || null; }
+function getActiveChat() {
+  return chats.find((chat) => chat.id === activeChatId) || null;
+}
 function upsertConversation(conversation, preserveExistingMessages = true) {
   const normalized = normalizeConversation(conversation);
   if (!normalized) return null;
   const index = chats.findIndex((item) => item.id === normalized.id);
-  if (index === -1) { chats.unshift(normalized); } else {
+  if (index === -1) {
+    chats.unshift(normalized);
+  } else {
     const existing = chats[index];
     chats[index] = {
       ...existing,
       ...normalized,
       modelId: normalized.modelId || existing.modelId || DEFAULT_MODEL_ID,
       pinned: normalized.pinned,
-      messages: normalized.messages.length > 0 || !preserveExistingMessages ? normalized.messages : existing.messages || [],
+      messages:
+        normalized.messages.length > 0 || !preserveExistingMessages
+          ? normalized.messages
+          : existing.messages || [],
     };
   }
   sortChats();
@@ -494,15 +574,22 @@ function upsertConversation(conversation, preserveExistingMessages = true) {
 async function loadConversationDetail(conversationId) {
   if (!conversationId) return null;
   const existing = getActiveChat();
-  if (existing && existing.id === String(conversationId) && existing.messages.length > 0) return existing;
+  if (existing && existing.id === String(conversationId) && existing.messages.length > 0)
+    return existing;
   const data = await apiRequest(`/api/conversations/${encodeURIComponent(conversationId)}`);
   return upsertConversation(data.conversation || data, true);
 }
 async function syncActiveConversationId(conversationId) {
-  await apiRequest("/api/state", { method: "PATCH", body: JSON.stringify({ activeConversationId: conversationId ? String(conversationId) : null }) });
+  await apiRequest("/api/state", {
+    method: "PATCH",
+    body: JSON.stringify({ activeConversationId: conversationId ? String(conversationId) : null }),
+  });
 }
 async function createChat(title = "گفت‌وگوی جدید") {
-  const data = await apiRequest("/api/conversations", { method: "POST", body: JSON.stringify({ modelId: selectedModelId }) });
+  const data = await apiRequest("/api/conversations", {
+    method: "POST",
+    body: JSON.stringify({ modelId: selectedModelId }),
+  });
   const conversation = data.conversation || data;
   upsertConversation(conversation, false);
   activeChatId = String(conversation.id);
@@ -517,7 +604,10 @@ async function ensureActiveChat() {
   if (!chat) {
     chat = await createChat();
   }
-  if (chat && (!chat.messages || chat.messages.length === 0)) { await loadConversationDetail(chat.id).catch(console.error); chat = getActiveChat(); }
+  if (chat && (!chat.messages || chat.messages.length === 0)) {
+    await loadConversationDetail(chat.id).catch(console.error);
+    chat = getActiveChat();
+  }
   return chat;
 }
 async function setActiveChat(chatId) {
@@ -557,7 +647,10 @@ async function deleteChat(chatId) {
   if (index === -1) return;
   await apiRequest(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
   chats.splice(index, 1);
-  if (activeChatId === id) { activeChatId = chats[0] ? chats[0].id : null; await syncActiveConversationId(activeChatId).catch(console.error); }
+  if (activeChatId === id) {
+    activeChatId = chats[0] ? chats[0].id : null;
+    await syncActiveConversationId(activeChatId).catch(console.error);
+  }
   renderChatList();
   renderActiveChat();
   const nextChat = getActiveChat();
@@ -569,7 +662,10 @@ async function updateChatTitle(chatId, title) {
   const chat = chats.find((item) => item.id === id);
   if (!chat) return;
   const cleanTitle = String(title || "").trim() || "گفت‌وگوی جدید";
-  const data = await apiRequest(`/api/conversations/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ title: cleanTitle }) });
+  const data = await apiRequest(`/api/conversations/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ title: cleanTitle }),
+  });
   upsertConversation(data.conversation || data, false);
   renderChatList();
   renderActiveChat();
@@ -605,12 +701,17 @@ function updateChatTitleFromFirstMessage(chat) {
   const title = raw.replace(/\s+/g, " ");
   chat.title = title.slice(0, 36) || "گفت‌وگوی جدید";
 }
-function openOverlay() { if (overlayEl) overlayEl.classList.add("show"); }
+function openOverlay() {
+  if (overlayEl) overlayEl.classList.add("show");
+}
 function closeOverlayIfIdle() {
   const drawerOpen = drawerEl && drawerEl.classList.contains("open");
   const profileOpen = profileModalEl && profileModalEl.classList.contains("show");
-  const deleteConfirmOpen = document.getElementById("deleteConfirmModal") && document.getElementById("deleteConfirmModal").classList.contains("show");
-  if (!drawerOpen && !profileOpen && !deleteConfirmOpen && overlayEl) overlayEl.classList.remove("show");
+  const deleteConfirmOpen =
+    document.getElementById("deleteConfirmModal") &&
+    document.getElementById("deleteConfirmModal").classList.contains("show");
+  if (!drawerOpen && !profileOpen && !deleteConfirmOpen && overlayEl)
+    overlayEl.classList.remove("show");
 }
 function openDrawer() {
   closeAllMenus();
@@ -628,7 +729,11 @@ function closeDrawer() {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       if (userInputEl && !isSending) {
-        try { userInputEl.focus({ preventScroll: true }); } catch { userInputEl.focus(); }
+        try {
+          userInputEl.focus({ preventScroll: true });
+        } catch {
+          userInputEl.focus();
+        }
       }
     });
   });
@@ -643,7 +748,10 @@ function openProfileModal() {
   if (profileModalEl) profileModalEl.classList.add("show");
   openOverlay();
 }
-function closeProfileModal() { if (profileModalEl) profileModalEl.classList.remove("show"); closeOverlayIfIdle(); }
+function closeProfileModal() {
+  if (profileModalEl) profileModalEl.classList.remove("show");
+  closeOverlayIfIdle();
+}
 function autoResizeTextarea() {
   if (!userInputEl) return;
   userInputEl.style.height = "auto";
@@ -679,7 +787,7 @@ function ensureScrollSentinel() {
       const entry = entries[0];
       scrollToBottomBtnEl.hidden = entry.isIntersecting;
     },
-    { root: chatMainEl, rootMargin: "0px 0px 100px 0px", threshold: 0 }
+    { root: chatMainEl, rootMargin: "0px 0px 100px 0px", threshold: 0 },
   );
   scrollSentinelObserver.observe(scrollSentinelEl);
 }
@@ -693,13 +801,14 @@ function detectDirection(text) {
   }
   return "rtl";
 }
-const markdownRenderer = window.markdownit({
-  html: true,
-  linkify: true,
-  typographer: true,
-  highlight: (code, language) =>
-    `<pre data-language="${String(language || "Code")}" data-lang="${String(language || "plaintext")}"><code class="language-${String(language || "plaintext")}">${window.markdownit().utils.escapeHtml(code)}</code></pre>`,
-})
+const markdownRenderer = window
+  .markdownit({
+    html: true,
+    linkify: true,
+    typographer: true,
+    highlight: (code, language) =>
+      `<pre data-language="${String(language || "Code")}" data-lang="${String(language || "plaintext")}"><code class="language-${String(language || "plaintext")}">${window.markdownit().utils.escapeHtml(code)}</code></pre>`,
+  })
   .use(window.markdownitTaskLists, { enabled: true, label: true, labelAfter: true });
 function renderMarkdown(markdown) {
   return markdownRenderer.render(normalizeLatex(markdown));
@@ -727,7 +836,8 @@ function attachCodeCopyButtons(container) {
     const code = pre.querySelector("code");
     if (!code) return;
     const languageClass = pre.dataset.lang || "plaintext";
-    if (!code.classList.contains(`language-${languageClass}`)) code.classList.add(`language-${languageClass}`);
+    if (!code.classList.contains(`language-${languageClass}`))
+      code.classList.add(`language-${languageClass}`);
     if (!code.dataset.highlighted && typeof window.hljs === "object" && window.hljs) {
       try {
         window.hljs.highlightElement(code);
@@ -763,7 +873,8 @@ async function copyText(text, button) {
     }, 1200);
   };
   try {
-    if (navigator.clipboard?.writeText && window.isSecureContext) await navigator.clipboard.writeText(value);
+    if (navigator.clipboard?.writeText && window.isSecureContext)
+      await navigator.clipboard.writeText(value);
     else {
       const textarea = document.createElement("textarea");
       textarea.value = value;
@@ -776,7 +887,10 @@ async function copyText(text, button) {
       if (!copied) throw new Error("Copy command failed");
     }
     markCopied();
-  } catch (error) { console.error("Copy failed:", error); showToast("کپی کردن انجام نشد"); }
+  } catch (error) {
+    console.error("Copy failed:", error);
+    showToast("کپی کردن انجام نشد");
+  }
 }
 function createCopyButton(text) {
   const button = document.createElement("button");
@@ -839,65 +953,73 @@ function renderUserMessage(msg) {
   const actionsDiv = document.createElement("div");
   actionsDiv.className = "message-actions-overlay";
   actionsDiv.appendChild(createCopyButton(msg.content));
-  const editBtn = createIconButton("ویرایش", "M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z");
+  const editBtn = createIconButton(
+    "ویرایش",
+    "M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z",
+  );
   editBtn.addEventListener("click", () => {
-     const chat = getActiveChat();
-     if(!chat) return;
-     const index = chat.messages.indexOf(msg);
-     if(index === -1) return;
-     const wrapperClone = wrapper.cloneNode(true);
-     const textarea = document.createElement("textarea");
-     textarea.className = "composer-input";
-     textarea.value = msg.content;
-     textarea.style.width = "100%";
-     textarea.style.padding = "12px 16px";
-     textarea.style.borderRadius = "20px";
-     textarea.style.border = "1px solid var(--composer-border)";
-     textarea.style.background = "var(--composer-bg)";
-     textarea.style.color = "var(--text-color)";
-     textarea.style.fontSize = "16px";
-     textarea.style.resize = "none";
-     textarea.style.marginBottom = "8px";
-     textarea.rows = 3;
-     const saveBtn = document.createElement("button");
-     saveBtn.textContent = "ذخیره";
-     saveBtn.className = "primary-btn";
-     saveBtn.style.minHeight = "30px";
-     saveBtn.style.padding = "4px 16px";
-     saveBtn.style.fontSize = "13px";
-     const cancelBtn = document.createElement("button");
-     cancelBtn.textContent = "لغو";
-     cancelBtn.className = "primary-btn";
-     cancelBtn.style.background = "transparent";
-     cancelBtn.style.color = "var(--text-color)";
-     cancelBtn.style.minHeight = "30px";
-     cancelBtn.style.padding = "4px 16px";
-     cancelBtn.style.fontSize = "13px";
-     const btnWrapper = document.createElement("div");
-     btnWrapper.style.display = "flex";
-     btnWrapper.style.gap = "8px";
-     btnWrapper.style.justifyContent = "flex-end";
-     btnWrapper.appendChild(cancelBtn);
-     btnWrapper.appendChild(saveBtn);
-     wrapperClone.innerHTML = "";
-     wrapperClone.appendChild(textarea);
-     wrapperClone.appendChild(btnWrapper);
-     const parent = messagesSectionEl;
-     const oldNode = wrapper;
-     parent.replaceChild(wrapperClone, oldNode);
-     textarea.focus();
-     textarea.style.height = "auto";
-     textarea.style.height = textarea.scrollHeight + "px";
-     textarea.oninput = () => { textarea.style.height = "auto"; textarea.style.height = textarea.scrollHeight + "px"; };
-     cancelBtn.onclick = () => { renderActiveChat(); };
-     saveBtn.onclick = async () => {
-       const newContent = textarea.value.trim();
-       if(!newContent) return;
-       chat.messages[index].content = newContent;
-       await saveConversationMessages(chat.id, chat.messages, chat.title);
-       renderActiveChat();
-       await regenerateLastReply(index);
-     };
+    const chat = getActiveChat();
+    if (!chat) return;
+    const index = chat.messages.indexOf(msg);
+    if (index === -1) return;
+    const wrapperClone = wrapper.cloneNode(true);
+    const textarea = document.createElement("textarea");
+    textarea.className = "composer-input";
+    textarea.value = msg.content;
+    textarea.style.width = "100%";
+    textarea.style.padding = "12px 16px";
+    textarea.style.borderRadius = "20px";
+    textarea.style.border = "1px solid var(--composer-border)";
+    textarea.style.background = "var(--composer-bg)";
+    textarea.style.color = "var(--text-color)";
+    textarea.style.fontSize = "16px";
+    textarea.style.resize = "none";
+    textarea.style.marginBottom = "8px";
+    textarea.rows = 3;
+    const saveBtn = document.createElement("button");
+    saveBtn.textContent = "ذخیره";
+    saveBtn.className = "primary-btn";
+    saveBtn.style.minHeight = "30px";
+    saveBtn.style.padding = "4px 16px";
+    saveBtn.style.fontSize = "13px";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.textContent = "لغو";
+    cancelBtn.className = "primary-btn";
+    cancelBtn.style.background = "transparent";
+    cancelBtn.style.color = "var(--text-color)";
+    cancelBtn.style.minHeight = "30px";
+    cancelBtn.style.padding = "4px 16px";
+    cancelBtn.style.fontSize = "13px";
+    const btnWrapper = document.createElement("div");
+    btnWrapper.style.display = "flex";
+    btnWrapper.style.gap = "8px";
+    btnWrapper.style.justifyContent = "flex-end";
+    btnWrapper.appendChild(cancelBtn);
+    btnWrapper.appendChild(saveBtn);
+    wrapperClone.innerHTML = "";
+    wrapperClone.appendChild(textarea);
+    wrapperClone.appendChild(btnWrapper);
+    const parent = messagesSectionEl;
+    const oldNode = wrapper;
+    parent.replaceChild(wrapperClone, oldNode);
+    textarea.focus();
+    textarea.style.height = "auto";
+    textarea.style.height = textarea.scrollHeight + "px";
+    textarea.oninput = () => {
+      textarea.style.height = "auto";
+      textarea.style.height = textarea.scrollHeight + "px";
+    };
+    cancelBtn.onclick = () => {
+      renderActiveChat();
+    };
+    saveBtn.onclick = async () => {
+      const newContent = textarea.value.trim();
+      if (!newContent) return;
+      chat.messages[index].content = newContent;
+      await saveConversationMessages(chat.id, chat.messages, chat.title);
+      renderActiveChat();
+      await regenerateLastReply(index);
+    };
   });
   actionsDiv.appendChild(editBtn);
   stack.appendChild(bubble);
@@ -1027,8 +1149,12 @@ function renderMessages(messages) {
           counterSpan.textContent = `${idx + 1} / ${total}`;
           typesetMathIn(content);
         };
-        undoBtn.addEventListener("click", () => updateVersion(Number(wrapper.dataset.currentVersion) - 1));
-        redoBtn.addEventListener("click", () => updateVersion(Number(wrapper.dataset.currentVersion) + 1));
+        undoBtn.addEventListener("click", () =>
+          updateVersion(Number(wrapper.dataset.currentVersion) - 1),
+        );
+        redoBtn.addEventListener("click", () =>
+          updateVersion(Number(wrapper.dataset.currentVersion) + 1),
+        );
         paginationDiv.appendChild(undoBtn);
         paginationDiv.appendChild(counterSpan);
         paginationDiv.appendChild(redoBtn);
@@ -1121,7 +1247,9 @@ function createChatItem(chat) {
   chatButton.type = "button";
   chatButton.className = "chat-item-btn";
   chatButton.textContent = chat.title || "گفت‌وگوی جدید";
-  chatButton.addEventListener("click", () => { void setActiveChat(chat.id); });
+  chatButton.addEventListener("click", () => {
+    void setActiveChat(chat.id);
+  });
 
   if (chat.pinned) {
     item.appendChild(createPinIcon());
@@ -1155,12 +1283,24 @@ function createChatItem(chat) {
     const input = document.createElement("input");
     input.className = "chat-item-input";
     input.value = chat.title || "";
-    const finish = (commit) => { if (commit) { void updateChatTitle(chat.id, input.value); } else { renderChatList(); } };
-    input.addEventListener("keydown", (keyboardEvent) => { if (keyboardEvent.key === "Enter") finish(true); if (keyboardEvent.key === "Escape") finish(false); });
+    const finish = (commit) => {
+      if (commit) {
+        void updateChatTitle(chat.id, input.value);
+      } else {
+        renderChatList();
+      }
+    };
+    input.addEventListener("keydown", (keyboardEvent) => {
+      if (keyboardEvent.key === "Enter") finish(true);
+      if (keyboardEvent.key === "Escape") finish(false);
+    });
     input.addEventListener("blur", () => finish(true));
     item.innerHTML = "";
     item.appendChild(input);
-    requestAnimationFrame(() => { input.focus(); input.select(); });
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
   });
 
   const deleteItem = document.createElement("button");
@@ -1176,7 +1316,7 @@ function createChatItem(chat) {
     event.stopPropagation();
     const isOpen = menu.classList.contains("show");
     closeAllMenus();
-    if(!isOpen) {
+    if (!isOpen) {
       menu.classList.add("show");
       const rect = toggleBtn.getBoundingClientRect();
       const spaceBelow = window.innerHeight - rect.bottom;
@@ -1237,8 +1377,8 @@ function showLoadingIndicator(userMsgId) {
   for (let i = messages.length - 1; i >= 0; i--) {
     const el = messages[i];
     if (el.classList.contains("message") && el.dataset.parent === userMsgId) {
-        insertAfter = el;
-        break;
+      insertAfter = el;
+      break;
     }
   }
   if (insertAfter) {
@@ -1250,27 +1390,50 @@ function showLoadingIndicator(userMsgId) {
 }
 function hideLoadingIndicator() {
   const indicators = document.querySelectorAll(".loading-indicator");
-  indicators.forEach(el => el.remove());
+  indicators.forEach((el) => el.remove());
 }
 function extractAssistantContent(data) {
   if (!data || typeof data !== "object") return "";
   const choices = data.choices;
-  if (Array.isArray(choices) && choices[0] && choices[0].message) { return String(choices[0].message.content || "").trim(); }
-  for (const key of ["content", "text", "answer", "response"]) { if (typeof data[key] === "string" && data[key].trim()) return data[key].trim(); }
+  if (Array.isArray(choices) && choices[0] && choices[0].message) {
+    return String(choices[0].message.content || "").trim();
+  }
+  for (const key of ["content", "text", "answer", "response"]) {
+    if (typeof data[key] === "string" && data[key].trim()) return data[key].trim();
+  }
   if (typeof data.raw === "string" && data.raw.trim()) return data.raw.trim();
   return "";
 }
 async function requestAssistantReply(messages, model = selectedModelId) {
   const response = await apiRequest("/api/chat", {
     method: "POST",
-    body: JSON.stringify({ model, messages: [{ role: "system", content: buildSystemPrompt() }, ...messages.map((message) => ({ role: message.role, content: String(message.content || "") }))] })
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: buildSystemPrompt() },
+        ...messages.map((message) => ({
+          role: message.role,
+          content: String(message.content || ""),
+        })),
+      ],
+    }),
   });
   return response;
 }
 async function saveConversationMessages(chatId, messages, title) {
-  const payload = { messages: messages.map((message) => ({ role: message.role, content: String(message.content || ""), ...(message.image ? { image: message.image } : {}), ...(message.imageUrl ? { imageUrl: message.imageUrl } : {}) })) };
+  const payload = {
+    messages: messages.map((message) => ({
+      role: message.role,
+      content: String(message.content || ""),
+      ...(message.image ? { image: message.image } : {}),
+      ...(message.imageUrl ? { imageUrl: message.imageUrl } : {}),
+    })),
+  };
   if (title) payload.title = title;
-  const data = await apiRequest(`/api/conversations/${encodeURIComponent(chatId)}`, { method: "PATCH", body: JSON.stringify(payload) });
+  const data = await apiRequest(`/api/conversations/${encodeURIComponent(chatId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
   upsertConversation(data.conversation || data, false);
   renderChatList();
   renderActiveChat();
@@ -1297,7 +1460,9 @@ function updateStreamingMessageOnly() {
   if (!chat) return;
   const streamingMsg = chat.messages.find((m) => m._streaming);
   if (!streamingMsg) return;
-  const wrapper = messagesSectionEl?.querySelector(`.message.assistant-wrap[data-parent="${streamingMsg._parentId}"]`);
+  const wrapper = messagesSectionEl?.querySelector(
+    `.message.assistant-wrap[data-parent="${streamingMsg._parentId}"]`,
+  );
   if (!wrapper) return;
   const content = wrapper.querySelector(".assistant-content");
   if (!content) return;
@@ -1312,7 +1477,12 @@ async function sendMessage(promptOverride = null) {
   if (isSending) return;
   let chat = await ensureActiveChat();
   if (!chat) return;
-  const rawText = typeof promptOverride === "string" && promptOverride.length > 0 ? promptOverride : userInputEl ? userInputEl.value : "";
+  const rawText =
+    typeof promptOverride === "string" && promptOverride.length > 0
+      ? promptOverride
+      : userInputEl
+        ? userInputEl.value
+        : "";
   const text = String(rawText || "").trim();
   if (!text && !pendingImageDataUrl) return;
   if (pendingImageDataUrl && !modelAcceptsImages()) return;
@@ -1321,13 +1491,27 @@ async function sendMessage(promptOverride = null) {
   const tempUserMsgId = `${nowTs()}`;
   const image = pendingImageDataUrl;
   const chatModelId = chat.modelId || selectedModelId;
-  const tempUserMsg = { role: "user", content: text, ...(image ? { image } : {}), _id: tempUserMsgId };
+  const tempUserMsg = {
+    role: "user",
+    content: text,
+    ...(image ? { image } : {}),
+    _id: tempUserMsgId,
+  };
   chat.messages.push(tempUserMsg);
   renderActiveChat();
-  if (userInputEl) { userInputEl.value = ""; autoResizeTextarea(); }
+  if (userInputEl) {
+    userInputEl.value = "";
+    autoResizeTextarea();
+  }
   clearPendingImage();
   try {
-    chat.messages.push({ role: "assistant", content: "", _parentId: tempUserMsgId, _id: `stream_${nowTs()}`, _streaming: true });
+    chat.messages.push({
+      role: "assistant",
+      content: "",
+      _parentId: tempUserMsgId,
+      _id: `stream_${nowTs()}`,
+      _streaming: true,
+    });
     renderActiveChat();
     const currentStreamingReply = chat.messages.find((message) => message._streaming);
     let updatedConversation = null;
@@ -1341,7 +1525,7 @@ async function sendMessage(promptOverride = null) {
           scheduleStreamRender();
         }
         if (eventName === "done") updatedConversation = payload.conversation || null;
-      }
+      },
     );
     if (currentStreamingReply) delete currentStreamingReply._streaming;
     if (!updatedConversation) throw new Error("پاسخ گفتگو دریافت نشد.");
@@ -1352,7 +1536,11 @@ async function sendMessage(promptOverride = null) {
   } catch (error) {
     console.error("sendMessage failed:", error);
     if (userInputEl) userInputEl.value = text;
-    if (image) { pendingImageDataUrl = image; if (attachImageBtnEl) attachImageBtnEl.classList.add("has-image"); showPendingImagePreview(image); }
+    if (image) {
+      pendingImageDataUrl = image;
+      if (attachImageBtnEl) attachImageBtnEl.classList.add("has-image");
+      showPendingImagePreview(image);
+    }
     showToast("خطا در ارسال پیام");
   } finally {
     updateSendingState(false);
@@ -1377,12 +1565,22 @@ async function regenerateLastReply(userMsgIndex = null) {
   if (!chat) return;
   let lastUserIndex = -1;
   let userMsgId = null;
-  if (userMsgIndex !== null && userMsgIndex >= 0 && userMsgIndex < chat.messages.length && chat.messages[userMsgIndex].role === "user") {
+  if (
+    userMsgIndex !== null &&
+    userMsgIndex >= 0 &&
+    userMsgIndex < chat.messages.length &&
+    chat.messages[userMsgIndex].role === "user"
+  ) {
     lastUserIndex = userMsgIndex;
     userMsgId = chat.messages[lastUserIndex]._id || `${nowTs()}_${lastUserIndex}`;
     chat.messages[lastUserIndex]._id = userMsgId;
   } else {
-    for (let index = chat.messages.length - 1; index >= 0; index -= 1) { if (chat.messages[index].role === "user") { lastUserIndex = index; break; } }
+    for (let index = chat.messages.length - 1; index >= 0; index -= 1) {
+      if (chat.messages[index].role === "user") {
+        lastUserIndex = index;
+        break;
+      }
+    }
     if (lastUserIndex === -1) return;
     userMsgId = chat.messages[lastUserIndex]._id || `${nowTs()}_${lastUserIndex}`;
     chat.messages[lastUserIndex]._id = userMsgId;
@@ -1392,9 +1590,18 @@ async function regenerateLastReply(userMsgIndex = null) {
   setSendButtonLoading(true);
   showLoadingIndicator(userMsgId);
   try {
-    const response = await requestAssistantReply(truncatedMessages, chat.modelId || selectedModelId);
+    const response = await requestAssistantReply(
+      truncatedMessages,
+      chat.modelId || selectedModelId,
+    );
     const assistantReply = extractAssistantContent(response) || "پاسخی دریافت نشد.";
-    const streamingReply = { role: "assistant", content: "", _parentId: userMsgId, _id: `stream_${nowTs()}`, _streaming: true };
+    const streamingReply = {
+      role: "assistant",
+      content: "",
+      _parentId: userMsgId,
+      _id: `stream_${nowTs()}`,
+      _streaming: true,
+    };
     chat.messages.push(streamingReply);
     renderActiveChat();
     await typeAssistantReply(streamingReply, assistantReply);
@@ -1403,7 +1610,9 @@ async function regenerateLastReply(userMsgIndex = null) {
     await saveConversationMessages(chat.id, chat.messages, chat.title);
     renderChatList();
     renderActiveChat();
-  } catch (error) { console.error(error); } finally {
+  } catch (error) {
+    console.error(error);
+  } finally {
     updateSendingState(false);
     setSendButtonLoading(false);
     hideLoadingIndicator();
@@ -1428,7 +1637,12 @@ function handleOverlayClick() {
   closeDeleteConfirmModal();
 }
 async function saveProfile() {
-  const profile = { name: profileNameEl ? profileNameEl.value.trim() : "", job: profileJobEl ? profileJobEl.value.trim() : "", systemPrompt: profileSystemPromptEl ? profileSystemPromptEl.value.trim() : "", responseStyle: profileResponseStyleEl ? profileResponseStyleEl.value.trim() : "" };
+  const profile = {
+    name: profileNameEl ? profileNameEl.value.trim() : "",
+    job: profileJobEl ? profileJobEl.value.trim() : "",
+    systemPrompt: profileSystemPromptEl ? profileSystemPromptEl.value.trim() : "",
+    responseStyle: profileResponseStyleEl ? profileResponseStyleEl.value.trim() : "",
+  };
   const data = await apiRequest("/api/profile", { method: "PATCH", body: JSON.stringify(profile) });
   setProfile(data.profile || profile);
   showToast("تغییرات پروفایل ذخیره شد");
@@ -1440,9 +1654,15 @@ async function initializeState() {
   const state = await apiRequest("/api/state");
   setProfile(state.profile || {});
   applyTheme(state.theme || "auto", false);
-  chats = Array.isArray(state.conversations) ? state.conversations.map(normalizeConversationSummary).filter(Boolean) : [];
+  chats = Array.isArray(state.conversations)
+    ? state.conversations.map(normalizeConversationSummary).filter(Boolean)
+    : [];
   sortChats();
-  activeChatId = state.activeConversationId ? String(state.activeConversationId) : chats[0] ? chats[0].id : null;
+  activeChatId = state.activeConversationId
+    ? String(state.activeConversationId)
+    : chats[0]
+      ? chats[0].id
+      : null;
   const routeChatId = chatIdFromPath();
   if (routeChatId && chats.some((chat) => chat.id === routeChatId)) activeChatId = routeChatId;
   if (activeChatId) await loadConversationDetail(activeChatId).catch(console.error);
@@ -1507,32 +1727,69 @@ if (pinFormEl) {
   });
 }
 
-if (sendBtnEl) sendBtnEl.addEventListener("click", (event) => { event.preventDefault(); void sendMessage(); });
+if (sendBtnEl)
+  sendBtnEl.addEventListener("click", (event) => {
+    event.preventDefault();
+    void sendMessage();
+  });
 if (scrollToBottomBtnEl) scrollToBottomBtnEl.addEventListener("click", scrollToBottom);
-if (attachImageBtnEl) attachImageBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleAttachmentMenu(); });
-if (attachmentImageOptionEl) attachmentImageOptionEl.addEventListener("click", () => { if (modelAcceptsImages() && imageInputEl) imageInputEl.click(); closeAttachmentMenu(); });
+if (attachImageBtnEl)
+  attachImageBtnEl.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleAttachmentMenu();
+  });
+if (attachmentImageOptionEl)
+  attachmentImageOptionEl.addEventListener("click", () => {
+    if (modelAcceptsImages() && imageInputEl) imageInputEl.click();
+    closeAttachmentMenu();
+  });
 if (removeImageBtnEl) removeImageBtnEl.addEventListener("click", clearPendingImage);
-if (imageInputEl) imageInputEl.addEventListener("change", () => {
-  const file = imageInputEl.files && imageInputEl.files[0];
-  if (!file) return;
-  if (!modelAcceptsImages()) { clearPendingImage(); return; }
-  if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) { showToast("فقط تصویر تا ۵ مگابایت قابل ارسال است"); clearPendingImage(); return; }
-  const reader = new FileReader();
-  reader.onload = () => { pendingImageDataUrl = String(reader.result || ""); if (attachImageBtnEl) attachImageBtnEl.classList.add("has-image"); showPendingImagePreview(pendingImageDataUrl); };
-  reader.readAsDataURL(file);
-});
-if (modelQuickBtnEl) modelQuickBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleModelQuickMenu(); });
+if (imageInputEl)
+  imageInputEl.addEventListener("change", () => {
+    const file = imageInputEl.files && imageInputEl.files[0];
+    if (!file) return;
+    if (!modelAcceptsImages()) {
+      clearPendingImage();
+      return;
+    }
+    if (!file.type.startsWith("image/") || file.size > 5 * 1024 * 1024) {
+      showToast("فقط تصویر تا ۵ مگابایت قابل ارسال است");
+      clearPendingImage();
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      pendingImageDataUrl = String(reader.result || "");
+      if (attachImageBtnEl) attachImageBtnEl.classList.add("has-image");
+      showPendingImagePreview(pendingImageDataUrl);
+    };
+    reader.readAsDataURL(file);
+  });
+if (modelQuickBtnEl)
+  modelQuickBtnEl.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleModelQuickMenu();
+  });
 if (modelQuickRangeEl) {
   modelQuickRangeEl.addEventListener("input", () => {
     const provider = getProviderForModel(selectedModelId);
-    const index = Math.min(provider.models.length - 1, Math.max(0, Number(modelQuickRangeEl.value) || 0));
-    modelQuickRangeEl.style.setProperty("--quick-progress", `${(index / Math.max(1, provider.models.length - 1)) * 100}%`);
+    const index = Math.min(
+      provider.models.length - 1,
+      Math.max(0, Number(modelQuickRangeEl.value) || 0),
+    );
+    modelQuickRangeEl.style.setProperty(
+      "--quick-progress",
+      `${(index / Math.max(1, provider.models.length - 1)) * 100}%`,
+    );
     modelQuickRangeEl.setAttribute("aria-valuetext", provider.models[index]?.label || "");
   });
   modelQuickRangeEl.addEventListener("change", () => {
     if (isActiveChatModelLocked() || isSending) return;
     const provider = getProviderForModel(selectedModelId);
-    const index = Math.min(provider.models.length - 1, Math.max(0, Number(modelQuickRangeEl.value) || 0));
+    const index = Math.min(
+      provider.models.length - 1,
+      Math.max(0, Number(modelQuickRangeEl.value) || 0),
+    );
     const nextModelId = provider.models[index].id;
     if (nextModelId === selectedModelId) return;
     setSelectedModel(nextModelId, true);
@@ -1540,37 +1797,78 @@ if (modelQuickRangeEl) {
   });
 }
 if (userInputEl) userInputEl.addEventListener("input", autoResizeTextarea);
-if (modelPickerBtnEl) modelPickerBtnEl.addEventListener("click", (event) => { event.stopPropagation(); if (!isActiveChatModelLocked()) toggleModelMenu(); });
+if (modelPickerBtnEl)
+  modelPickerBtnEl.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (!isActiveChatModelLocked()) toggleModelMenu();
+  });
 if (menuBtnEl) menuBtnEl.addEventListener("click", openDrawer);
 if (closeDrawerBtnEl) closeDrawerBtnEl.addEventListener("click", closeDrawer);
 if (overlayEl) overlayEl.addEventListener("click", handleOverlayClick);
-if (newChatBtnEl) newChatBtnEl.onclick = () => { void handleNewChat(); };
-if (topbarNewChatBtnEl) topbarNewChatBtnEl.addEventListener("click", () => {
-  void handleNewChat().catch(console.error);
-});
-if (logoutBtnEl) logoutBtnEl.addEventListener("click", async () => {
-  try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); } catch (error) { console.error(error); }
-  closeDrawer();
-  appInitialized = false;
-  chats = [];
-  activeChatId = null;
-  window.history.replaceState({}, "", "/");
-  showPinGate();
-});
+if (newChatBtnEl)
+  newChatBtnEl.onclick = () => {
+    void handleNewChat();
+  };
+if (topbarNewChatBtnEl)
+  topbarNewChatBtnEl.addEventListener("click", () => {
+    void handleNewChat().catch(console.error);
+  });
+if (logoutBtnEl)
+  logoutBtnEl.addEventListener("click", async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+    } catch (error) {
+      console.error(error);
+    }
+    closeDrawer();
+    appInitialized = false;
+    chats = [];
+    activeChatId = null;
+    window.history.replaceState({}, "", "/");
+    showPinGate();
+  });
 if (profileBtnEl) profileBtnEl.addEventListener("click", openProfileModal);
-if (profileModalEl) profileModalEl.addEventListener("click", (event) => { if (event.target === profileModalEl) closeProfileModal(); });
+if (profileModalEl)
+  profileModalEl.addEventListener("click", (event) => {
+    if (event.target === profileModalEl) closeProfileModal();
+  });
 if (closeProfileBtnEl) closeProfileBtnEl.addEventListener("click", closeProfileModal);
-if (saveProfileBtnEl) saveProfileBtnEl.addEventListener("click", () => { void saveProfile().then(() => closeProfileModal()).catch(console.error); });
+if (saveProfileBtnEl)
+  saveProfileBtnEl.addEventListener("click", () => {
+    void saveProfile()
+      .then(() => closeProfileModal())
+      .catch(console.error);
+  });
 if (themeToggleEl) themeToggleEl.addEventListener("click", cycleTheme);
 if (mediaQuery) {
-  const onThemeChange = () => { if (currentTheme === "auto") applyTheme("auto", false); };
+  const onThemeChange = () => {
+    if (currentTheme === "auto") applyTheme("auto", false);
+  };
   if (mediaQuery.addEventListener) mediaQuery.addEventListener("change", onThemeChange);
   else if (mediaQuery.addListener) mediaQuery.addListener(onThemeChange);
 }
 document.addEventListener("click", (event) => {
-  if (modelMenuEl && modelPickerBtnEl && !modelMenuEl.contains(event.target) && !modelPickerBtnEl.contains(event.target)) closeModelMenu();
-  if (modelQuickMenuEl && modelQuickBtnEl && !modelQuickMenuEl.contains(event.target) && !modelQuickBtnEl.contains(event.target)) closeModelQuickMenu();
-  if (attachmentMenuEl && attachImageBtnEl && !attachmentMenuEl.contains(event.target) && !attachImageBtnEl.contains(event.target)) closeAttachmentMenu();
+  if (
+    modelMenuEl &&
+    modelPickerBtnEl &&
+    !modelMenuEl.contains(event.target) &&
+    !modelPickerBtnEl.contains(event.target)
+  )
+    closeModelMenu();
+  if (
+    modelQuickMenuEl &&
+    modelQuickBtnEl &&
+    !modelQuickMenuEl.contains(event.target) &&
+    !modelQuickBtnEl.contains(event.target)
+  )
+    closeModelQuickMenu();
+  if (
+    attachmentMenuEl &&
+    attachImageBtnEl &&
+    !attachmentMenuEl.contains(event.target) &&
+    !attachImageBtnEl.contains(event.target)
+  )
+    closeAttachmentMenu();
 });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {

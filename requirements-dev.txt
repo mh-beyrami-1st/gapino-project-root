@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Local tooling only (not needed in production)
+black==26.5.1
+ruff==0.16.7
