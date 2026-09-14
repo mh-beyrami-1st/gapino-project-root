@@ -1634,20 +1634,6 @@ window.addEventListener("popstate", async () => {
   if (chatId && chats.some((chat) => chat.id === chatId)) await setActiveChat(chatId);
 });
 
-if (window.visualViewport) {
-  const onViewportResize = () => {
-    document.documentElement.style.setProperty("--vvh", `${window.visualViewport.height}px`);
-    if (window.visualViewport.height >= window.innerHeight - 50) {
-      if (userInputEl && !isSending && document.activeElement === userInputEl) {
-        scrollToBottom();
-      }
-    }
-  };
-  window.visualViewport.addEventListener("resize", onViewportResize);
-  window.visualViewport.addEventListener("scroll", onViewportResize);
-  onViewportResize();
-}
-
 const deleteConfirmModalHTML = `
 <div id="deleteConfirmModal" class="modal" aria-hidden="true">
   <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="deleteConfirmTitle">

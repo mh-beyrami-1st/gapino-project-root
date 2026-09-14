@@ -937,9 +937,11 @@ button:disabled {
   flex: 0 0 auto;
   width: 100%;
   padding: 12px clamp(16px, 4vw, 56px);
-  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   background: var(--bg-color);
   z-index: 18;
+}
+:root.standalone .composer {
+  padding: 12px clamp(16px, 4vw, 56px);
 }
 .composer-inner {
   position: relative;
@@ -954,9 +956,6 @@ button:disabled {
   background: var(--composer-bg);
   box-shadow: 0 8px 28px rgba(0, 0, 0, .06);
   direction: rtl;
-}
-:root.standalone .composer {
-  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
 }
 .image-preview {
   position: absolute;
@@ -1831,7 +1830,7 @@ button:disabled {
 .scroll-to-bottom {
   position: absolute;
   left: 50%;
-  bottom: calc(88px + env(safe-area-inset-bottom, 0px));
+  bottom: 88px;
   z-index: 19;
   display: inline-flex;
   align-items: center;
