@@ -675,57 +675,37 @@ button:disabled {
 .generated-image-frame + .assistant-content {
   margin-top: 10px;
 }
-.assistant-content .katex {
-  font-size: 1.35em;
+.assistant-content mjx-container {
   direction: ltr;
   unicode-bidi: isolate;
-}
-.assistant-content .katex-display {
-  width: 100%;
-  padding: 0.5em 0;
   overflow-x: auto;
   overflow-y: hidden;
-  direction: ltr;
-  text-align: center;
-  unicode-bidi: isolate;
+  max-width: 100%;
+  vertical-align: middle;
   -webkit-overflow-scrolling: touch;
 }
-.assistant-content .katex-display > .katex {
-  display: inline-block;
-  max-width: none;
-  min-width: max-content;
+.assistant-content mjx-container[display="true"] {
+  display: block;
+  width: 100%;
+  text-align: center;
+  padding: 0.5em 0;
+  margin: 0.5em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
-.assistant-content .katex-display .katex-display {
-  margin: 0;
-  padding: 0;
-}
-.assistant-content .katex .mtable {
-  margin: 0;
-}
-.assistant-content .katex .vlist-t {
-  overflow: visible;
-}
-.assistant-content .katex-display::-webkit-scrollbar {
+.assistant-content mjx-container::-webkit-scrollbar {
   height: 6px;
 }
-.assistant-content .katex-display::-webkit-scrollbar-thumb {
+.assistant-content mjx-container::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: rgba(127, 127, 127, 0.35);
 }
-.assistant-content .katex-display::-webkit-scrollbar-track {
+.assistant-content mjx-container::-webkit-scrollbar-track {
   background: transparent;
 }
-.assistant-content .katex-inline-wrap {
+.assistant-content mjx-container svg {
   display: inline-block;
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  vertical-align: middle;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-}
-.assistant-content .katex-inline-wrap::-webkit-scrollbar {
-  display: none;
+  max-width: none;
 }
 .assistant-content p,
 .assistant-content li {
@@ -964,6 +944,7 @@ button:disabled {
   font-weight: 800;
 }
 .composer {
+  position: relative;
   flex: 0 0 auto;
   width: 100%;
   padding: 12px clamp(16px, 4vw, 56px);
@@ -989,8 +970,8 @@ button:disabled {
 }
 .image-preview {
   position: absolute;
-  right: clamp(12px, 4vw, 48px);
-  bottom: calc(100% + 6px);
+  right: clamp(16px, 4vw, 56px);
+  bottom: calc(100% + 8px);
   display: flex;
   align-items: flex-start;
   padding: 4px;
@@ -998,6 +979,7 @@ button:disabled {
   border-radius: 12px;
   background: var(--composer-bg);
   box-shadow: 0 8px 20px rgba(0, 0, 0, .18);
+  z-index: 19;
 }
 .image-preview[hidden] {
   display: none;

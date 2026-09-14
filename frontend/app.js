@@ -101,6 +101,7 @@ let appInitialized = false;
 let pendingImageDataUrl = "";
 let scrollSentinelObserver = null;
 let scrollSentinelEl = null;
+let streamRenderRafId = 0;
 
 function nowTs() { return Date.now(); }
 function chatRouteId(chatOrId) {
@@ -671,6 +672,7 @@ function ensureScrollSentinel() {
   scrollSentinelEl.className = "scroll-sentinel";
   scrollSentinelEl.setAttribute("aria-hidden", "true");
   messagesSectionEl.appendChild(scrollSentinelEl);
+  if (scrollToBottomBtnEl) scrollToBottomBtnEl.hidden = true;
   scrollSentinelObserver = new IntersectionObserver(
     (entries) => {
       if (!scrollToBottomBtnEl) return;
@@ -698,122 +700,25 @@ const markdownRenderer = window.markdownit({
   highlight: (code, language) =>
     `<pre data-language="${String(language || "Code")}" data-lang="${String(language || "plaintext")}"><code class="language-${String(language || "plaintext")}">${window.markdownit().utils.escapeHtml(code)}</code></pre>`,
 })
-  .use(window.markdownitTexmath, { engine: window.katex, delimiters: "dollars" })
   .use(window.markdownitTaskLists, { enabled: true, label: true, labelAfter: true });
 function renderMarkdown(markdown) {
-  const html = markdownRenderer.render(normalizeLatex(markdown));
-  return wrapInlineKatexForScroll(html);
-}
-function wrapInlineKatexForScroll(html) {
-  if (!html || html.indexOf("katex") === -1) return html;
-  const container = document.createElement("div");
-  container.innerHTML = html;
-
-  container.querySelectorAll(".katex").forEach((el) => {
-    if (el.closest(".katex-display")) return;
-    const parent = el.parentElement;
-    if (!parent) return;
-    if (parent.classList.contains("katex-inline-wrap")) return;
-    const wrapper = document.createElement("span");
-    wrapper.className = "katex-inline-wrap";
-    parent.replaceChild(wrapper, el);
-    wrapper.appendChild(el);
-  });
-
-  return container.innerHTML;
+  return markdownRenderer.render(normalizeLatex(markdown));
 }
 function normalizeLatex(text) {
   let value = String(text || "");
-
   value = value.replace(/\\\[/g, "$$$$");
   value = value.replace(/\\\]/g, "$$$$");
   value = value.replace(/\\\(/g, "$");
   value = value.replace(/\\\)/g, "$");
-
-  value = value.replace(/\$\$2ex\]/g, "\\\\[2ex]");
-  value = value.replace(/\$\$(\d+(?:\.\d+)?)ex\]/g, "\\\\[$1ex]");
-
-  value = value.replace(/\$\$\s*\n\s*\$\$/g, "");
-  value = value.replace(/\$\$\n\$\$/g, "");
-  value = value.replace(/\$\$[ \t]+/g, "$$$$");
-  value = value.replace(/[ \t]+\$\$/g, "$$$$");
-  value = value.replace(/\$\$\s*\n/g, "$$$$\n");
-  value = value.replace(/\n\s*\$\$/g, "\n$$$$");
-  value = value.replace(/\$\$\$\$/g, "$$$$");
-
-  value = wrapOrphanEnvironments(value);
-  value = splitGluedDisplayMath(value);
-  value = stripCasesRowSpacing(value);
-
-  value = value.replace(/\$\$\s*\n\s*\$\$/g, "");
-  value = value.replace(/\$\$\n\$\$/g, "");
-  value = value.replace(/\$\$\$\$/g, "$$$$");
-
   return value;
 }
-function wrapOrphanEnvironments(text) {
-  const envPattern = /\\begin\{(\w+)\}[\s\S]*?\\end\{\1\}/g;
-  return text.replace(envPattern, (match, _name, offset, source) => {
-    const before = source.slice(0, offset);
-    const after = source.slice(offset + match.length);
-    const openCount = (before.match(/\$\$/g) || []).length;
-    const closeCount = (after.match(/\$\$/g) || []).length;
-    const alreadyOpen = openCount % 2 === 1;
-    const alreadyClosed = closeCount % 2 === 1;
-    if (alreadyOpen && alreadyClosed) return match;
-    if (alreadyOpen && !alreadyClosed) return `${match}\n$$$$`;
-    if (!alreadyOpen && alreadyClosed) return `$$$$\n${match}`;
-    return `$$$$\n${match}\n$$$$`;
-  });
-}
-function splitGluedDisplayMath(text) {
-  const pattern = /\$\$([\s\S]*?)\$\$/g;
-  return text.replace(pattern, (match, body) => {
-    const casesOpen = (body.match(/\\begin\{/g) || []).length;
-    const casesClose = (body.match(/\\end\{/g) || []).length;
-    if (casesOpen !== casesClose) return match;
-    const splitIndex = findGluedSplit(body);
-    if (splitIndex === -1) return match;
-    const first = body.slice(0, splitIndex).trim();
-    const second = body.slice(splitIndex).trim();
-    if (!first || !second) return match;
-    return `$$${first}$$\n\n$$${second}$$`;
-  });
-}
-function findGluedSplit(body) {
-  const casesEnd = body.lastIndexOf("\\end{cases}");
-  if (casesEnd !== -1) {
-    const after = casesEnd + "\\end{cases}".length;
-    const tail = body.slice(after);
-    const tailMatch = tail.search(/[A-Za-z]\s*\([^)]*\)\s*=/);
-    if (tailMatch !== -1) {
-      const idx = after + tailMatch;
-      if (isBalancedFragment(body.slice(0, idx))) return idx;
-    }
+function typesetMathIn(element) {
+  if (!element) return;
+  if (window.MathJax?.typesetPromise) {
+    window.MathJax.typesetPromise([element]).catch((err) => {
+      console.error("MathJax typeset failed:", err);
+    });
   }
-  const fnPattern = /[A-Za-z]\s*\([^)]*\)\s*=\s*(?:\\begin|\\frac|\\sum|\\int|\\left|\\[a-zA-Z]+)/g;
-  let match;
-  while ((match = fnPattern.exec(body)) !== null) {
-    const idx = match.index;
-    if (idx === 0) continue;
-    if (isBalancedFragment(body.slice(0, idx))) return idx;
-  }
-  return -1;
-}
-function isBalancedFragment(fragment) {
-  const braces = (fragment.match(/\{/g) || []).length - (fragment.match(/\}/g) || []).length;
-  if (braces !== 0) return false;
-  const left = (fragment.match(/\\left/g) || []).length;
-  const right = (fragment.match(/\\right/g) || []).length;
-  if (left !== right) return false;
-  return true;
-}
-function stripCasesRowSpacing(text) {
-  const pattern = /\\begin\{cases\}([\s\S]*?)\\end\{cases\}/g;
-  return text.replace(pattern, (match, body) => {
-    const cleaned = body.replace(/\\\\\s*\[\s*\d+(?:\.\d+)?\s*(?:ex|pt|em|cm|mm|in)\s*\]/g, "\\\\");
-    return `\\begin{cases}${cleaned}\\end{cases}`;
-  });
 }
 function attachCodeCopyButtons(container) {
   if (!container) return;
@@ -1120,6 +1025,7 @@ function renderMessages(messages) {
           undoBtn.disabled = idx === 0;
           redoBtn.disabled = idx === total - 1;
           counterSpan.textContent = `${idx + 1} / ${total}`;
+          typesetMathIn(content);
         };
         undoBtn.addEventListener("click", () => updateVersion(Number(wrapper.dataset.currentVersion) - 1));
         redoBtn.addEventListener("click", () => updateVersion(Number(wrapper.dataset.currentVersion) + 1));
@@ -1134,12 +1040,14 @@ function renderMessages(messages) {
   }
   ensureScrollSentinel();
   scrollToBottom();
+  typesetMathIn(messagesSectionEl);
 }
 function renderActiveChat() {
   const chat = getActiveChat();
   const hasMessages = chat && Array.isArray(chat.messages) && chat.messages.length > 0;
   if (emptyStateEl) emptyStateEl.style.display = hasMessages ? "none" : "";
   if (messagesSectionEl) messagesSectionEl.style.display = hasMessages ? "" : "none";
+  if (!hasMessages && scrollToBottomBtnEl) scrollToBottomBtnEl.hidden = true;
   renderMessages(chat ? chat.messages : []);
   updateModelLockState();
 }
@@ -1377,6 +1285,29 @@ async function saveConversationModel(chatId, modelId) {
     console.error("Failed to save conversation model:", error);
   }
 }
+function scheduleStreamRender() {
+  if (streamRenderRafId) return;
+  streamRenderRafId = requestAnimationFrame(() => {
+    streamRenderRafId = 0;
+    updateStreamingMessageOnly();
+  });
+}
+function updateStreamingMessageOnly() {
+  const chat = getActiveChat();
+  if (!chat) return;
+  const streamingMsg = chat.messages.find((m) => m._streaming);
+  if (!streamingMsg) return;
+  const wrapper = messagesSectionEl?.querySelector(`.message.assistant-wrap[data-parent="${streamingMsg._parentId}"]`);
+  if (!wrapper) return;
+  const content = wrapper.querySelector(".assistant-content");
+  if (!content) return;
+  const text = String(streamingMsg.content || "");
+  content.setAttribute("dir", detectDirection(text));
+  content.innerHTML = renderMarkdown(text);
+  attachCodeCopyButtons(content);
+  typesetMathIn(content);
+  scrollToBottom();
+}
 async function sendMessage(promptOverride = null) {
   if (isSending) return;
   let chat = await ensureActiveChat();
@@ -1407,7 +1338,7 @@ async function sendMessage(promptOverride = null) {
         if (eventName === "delta" && currentStreamingReply) {
           currentStreamingReply.content += String(payload.content || "");
           if (payload.imageUrl) currentStreamingReply.imageUrl = payload.imageUrl;
-          renderActiveChat();
+          scheduleStreamRender();
         }
         if (eventName === "done") updatedConversation = payload.conversation || null;
       }

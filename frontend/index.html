@@ -17,14 +17,31 @@
       document.documentElement.dataset.theme = theme;
     } catch {}
   </script>
-  <link rel="stylesheet" href="/style.css" />
-  <link rel="stylesheet" href="/vendor/katex.min.css" />
+   <link rel="stylesheet" href="/style.css" />
   <link rel="stylesheet" href="/vendor/highlight-github-dark.min.css" />
   <script defer src="/vendor/markdown-it.min.js"></script>
-  <script defer src="/vendor/katex.min.js"></script>
-  <script defer src="/vendor/markdown-it-texmath.min.js"></script>
   <script defer src="/vendor/markdown-it-task-lists.min.js"></script>
   <script defer src="/vendor/highlight.min.js"></script>
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true,
+        processEnvironments: true,
+        packages: { '[+]': ['ams', 'newcommand', 'configmacros'] }
+      },
+      options: {
+        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+        ignoreHtmlClass: 'tex2jax_ignore',
+        processHtmlClass: 'tex2jax_process'
+      },
+      svg: {
+        fontCache: 'global'
+      }
+    };
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   <script defer src="/app.js"></script>
   <script defer src="/debug.js"></script>
 </head>
