@@ -22,6 +22,10 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 DATABASE_URL = os.getenv("DATABASE_URL")
 DATABASE_LOCK = RLock()
 
+STATE_CACHE = {}
+STATE_CACHE_TTL = 8.0
+STATE_CACHE_LOCK = RLock()
+
 _DB_POOL = None
 _DB_POOL_LOCK = RLock()
 
@@ -581,8 +585,16 @@ def _save_store_unlocked(state, owner_username="admin"):
 
 def load_store(owner_username=None):
     owner_username = owner_username or get_current_username() or "admin"
+    now = time.time()
+    with STATE_CACHE_LOCK:
+        cached = STATE_CACHE.get(owner_username)
+        if cached and now - cached["ts"] < STATE_CACHE_TTL:
+            return cached["state"]
     with DATABASE_LOCK:
-        return _load_store_unlocked(owner_username)
+        state = _load_store_unlocked(owner_username)
+    with STATE_CACHE_LOCK:
+        STATE_CACHE[owner_username] = {"state": state, "ts": time.time()}
+    return state
 
 
 def update_store(mutator, owner_username=None):
@@ -591,7 +603,9 @@ def update_store(mutator, owner_username=None):
         state = _load_store_unlocked(owner_username)
         result = mutator(state)
         state = _save_store_unlocked(state, owner_username)
-        return state, result
+    with STATE_CACHE_LOCK:
+        STATE_CACHE[owner_username] = {"state": state, "ts": time.time()}
+    return state, result
 
 
 def get_conversation(state, conversation_id):

@@ -50,6 +50,7 @@ const messagesSectionEl = document.getElementById("messagesSection");
 const chatMainEl = document.getElementById("chatMain");
 const userInputEl = document.getElementById("userInput");
 const sendBtnEl = document.getElementById("sendBtn");
+const scrollToBottomBtnEl = document.getElementById("scrollToBottomBtn");
 
 function applyDisplayMode() {
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
@@ -98,6 +99,8 @@ let pendingDeleteChatId = null;
 let selectedModelId = DEFAULT_MODEL_ID;
 let appInitialized = false;
 let pendingImageDataUrl = "";
+let scrollSentinelObserver = null;
+let scrollSentinelEl = null;
 
 function nowTs() { return Date.now(); }
 function chatRouteId(chatOrId) {
@@ -605,10 +608,35 @@ function autoResizeTextarea() {
 function scrollToBottom() {
   if (!chatMainEl) return;
   chatMainEl.scrollTop = chatMainEl.scrollHeight;
+  if (scrollToBottomBtnEl) scrollToBottomBtnEl.hidden = true;
   requestAnimationFrame(() => {
     if (!chatMainEl) return;
     chatMainEl.scrollTop = chatMainEl.scrollHeight;
+    if (scrollToBottomBtnEl) scrollToBottomBtnEl.hidden = true;
   });
+}
+function ensureScrollSentinel() {
+  if (!messagesSectionEl || !chatMainEl) return;
+  if (scrollSentinelObserver) {
+    scrollSentinelObserver.disconnect();
+    scrollSentinelObserver = null;
+  }
+  if (scrollSentinelEl && scrollSentinelEl.parentNode) {
+    scrollSentinelEl.parentNode.removeChild(scrollSentinelEl);
+  }
+  scrollSentinelEl = document.createElement("div");
+  scrollSentinelEl.className = "scroll-sentinel";
+  scrollSentinelEl.setAttribute("aria-hidden", "true");
+  messagesSectionEl.appendChild(scrollSentinelEl);
+  scrollSentinelObserver = new IntersectionObserver(
+    (entries) => {
+      if (!scrollToBottomBtnEl) return;
+      const entry = entries[0];
+      scrollToBottomBtnEl.hidden = entry.isIntersecting;
+    },
+    { root: chatMainEl, rootMargin: "0px 0px 100px 0px", threshold: 0 }
+  );
+  scrollSentinelObserver.observe(scrollSentinelEl);
 }
 function detectDirection(text) {
   const value = String(text || "");
@@ -1035,6 +1063,7 @@ function renderMessages(messages) {
       messagesSectionEl.appendChild(wrapper);
     }
   }
+  ensureScrollSentinel();
   scrollToBottom();
 }
 function renderActiveChat() {
@@ -1411,6 +1440,7 @@ if (pinFormEl) {
 }
 
 if (sendBtnEl) sendBtnEl.addEventListener("click", (event) => { event.preventDefault(); void sendMessage(); });
+if (scrollToBottomBtnEl) scrollToBottomBtnEl.addEventListener("click", scrollToBottom);
 if (attachImageBtnEl) attachImageBtnEl.addEventListener("click", (event) => { event.stopPropagation(); toggleAttachmentMenu(); });
 if (attachmentImageOptionEl) attachmentImageOptionEl.addEventListener("click", () => { if (modelAcceptsImages() && imageInputEl) imageInputEl.click(); closeAttachmentMenu(); });
 if (removeImageBtnEl) removeImageBtnEl.addEventListener("click", clearPendingImage);
